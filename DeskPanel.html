@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <base target="_top">
+
+  <style>
+    body{
+      background:#f7f8fa;
+      color:#1f2937;
+      font-family:Arial,sans-serif;
+      margin:0;
+    }
+
+    .wrap{
+      padding:16px;
+    }
+
+    .header{
+      margin-bottom:18px;
+    }
+
+    h2{
+      font-size:22px;
+      margin:0 0 6px;
+    }
+
+    .updated{
+      color:#6b7280;
+      font-size:12px;
+      line-height:1.4;
+    }
+
+    .status-row{
+      align-items:center;
+      display:flex;
+      gap:10px;
+      min-height:22px;
+      margin-bottom:12px;
+    }
+
+    #loading{
+      color:#6b7280;
+      display:none;
+      font-size:12px;
+    }
+
+    #status{
+      color:#15803d;
+      font-size:12px;
+      font-weight:bold;
+    }
+
+    #status.error{
+      color:#b91c1c;
+    }
+
+    .section{
+      margin-bottom:16px;
+    }
+
+    label{
+      color:#374151;
+      display:block;
+      font-size:12px;
+      font-weight:bold;
+      margin-bottom:7px;
+      text-transform:uppercase;
+    }
+
+    select,
+    input,
+    textarea{
+      background:#fff;
+      border:1px solid #d1d5db;
+      border-radius:7px;
+      box-sizing:border-box;
+      color:#111827;
+      font:inherit;
+      padding:9px 10px;
+      width:100%;
+    }
+
+    select:focus,
+    input:focus,
+    textarea:focus{
+      border-color:#2563eb;
+      outline:none;
+    }
+
+    textarea{
+      min-height:82px;
+      resize:vertical;
+    }
+
+    button{
+      background:#2563eb;
+      border:0;
+      border-radius:7px;
+      color:#fff;
+      cursor:pointer;
+      font-size:14px;
+      font-weight:bold;
+      padding:12px;
+      width:100%;
+    }
+
+    button:disabled{
+      background:#93c5fd;
+      cursor:default;
+    }
+
+    .secondary-button{
+      background:#fff;
+      border:1px solid #2563eb;
+      color:#2563eb;
+      margin-top:8px;
+    }
+
+    .secondary-button:disabled{
+      background:#f9fafb;
+      border-color:#93c5fd;
+      color:#93c5fd;
+    }
+
+    .assisted-proposal{
+      background:#fff;
+      border:1px solid #e5e7eb;
+      border-radius:7px;
+      display:none;
+      margin-top:12px;
+      padding:10px;
+    }
+
+    .proposal-title{
+      color:#111827;
+      font-size:14px;
+      font-weight:bold;
+      margin-bottom:10px;
+    }
+
+    .proposal-block{
+      padding:7px 0;
+    }
+
+    .proposal-block + .proposal-block{
+      border-top:1px solid #f3f4f6;
+    }
+
+    .proposal-label{
+      color:#6b7280;
+      font-size:11px;
+      font-weight:bold;
+      margin-bottom:3px;
+      text-transform:uppercase;
+    }
+
+    .proposal-value{
+      font-size:13px;
+      line-height:1.35;
+      word-break:break-word;
+    }
+
+    .confirm-update{
+      margin-top:12px;
+    }
+
+    .tasks{
+      background:#fff;
+      border:1px solid #e5e7eb;
+      border-radius:7px;
+      padding:8px 10px;
+    }
+
+    .task{
+      align-items:flex-start;
+      display:flex;
+      gap:8px;
+      line-height:1.35;
+      padding:6px 0;
+    }
+
+    .task + .task{
+      border-top:1px solid #f3f4f6;
+    }
+
+    .task input{
+      flex:0 0 auto;
+      margin-top:2px;
+      width:auto;
+    }
+
+    .task span{
+      flex:1;
+      word-break:break-word;
+    }
+
+    .task.completed{
+      color:#9ca3af;
+    }
+
+    .task.completed span{
+      text-decoration:line-through;
+    }
+
+    .empty{
+      color:#6b7280;
+      font-size:13px;
+      padding:6px 0;
+    }
+
+    .badge{
+      border-radius:999px;
+      display:inline-block;
+      font-size:12px;
+      font-weight:bold;
+      padding:5px 9px;
+    }
+
+    .badge.in-progress{
+      background:#dbeafe;
+      color:#1d4ed8;
+    }
+
+    .badge.waiting{
+      background:#fef3c7;
+      color:#92400e;
+    }
+
+    .badge.blocked{
+      background:#fee2e2;
+      color:#b91c1c;
+    }
+
+    .badge.completed{
+      background:#dcfce7;
+      color:#15803d;
+    }
+
+    .timeline{
+      background:#fff;
+      border:1px solid #e5e7eb;
+      border-radius:7px;
+      padding:8px 10px;
+    }
+
+    .timeline-event{
+      line-height:1.35;
+      padding:7px 0;
+    }
+
+    .timeline-event + .timeline-event{
+      border-top:1px solid #f3f4f6;
+    }
+
+    .timeline-meta{
+      color:#6b7280;
+      font-size:11px;
+      font-weight:bold;
+      margin-bottom:3px;
+      text-transform:uppercase;
+    }
+
+    .timeline-description{
+      font-size:13px;
+      word-break:break-word;
+    }
+
+    .ai-briefing{
+      background:#fff;
+      border:1px solid #e5e7eb;
+      border-radius:7px;
+      color:#4b5563;
+      font-size:13px;
+      line-height:1.4;
+      padding:10px;
+    }
+  </style>
+
+</head>
+
+<body>
+
+  <div class="wrap">
+
+    <div class="header">
+      <h2>Desk</h2>
+      <div class="updated">
+        Ultimo aggiornamento:<br>
+        <span id="updatedAt">-</span>
+      </div>
+    </div>
+
+    <div class="status-row">
+      <span id="loading">Caricamento...</span>
+      <span id="status"></span>
+    </div>
+
+    <div class="section">
+      <label>Progetto</label>
+      <select id="project"></select>
+    </div>
+
+    <div class="section">
+      <label>Focus</label>
+      <textarea id="focus"></textarea>
+    </div>
+
+    <div class="section">
+      <label>Prossima azione</label>
+      <textarea id="nextAction"></textarea>
+    </div>
+
+    <div class="section">
+      <label>Stato progetto</label>
+      <span id="projectStatus" class="badge in-progress">IN_PROGRESS</span>
+    </div>
+
+    <div class="section">
+      <label>Cosa hai fatto?</label>
+      <textarea id="update"></textarea>
+      <button id="analyzeUpdate" class="secondary-button" type="button">
+        Analizza
+      </button>
+
+      <div id="updateProposal" class="assisted-proposal">
+        <div class="proposal-title">Proposta di aggiornamento</div>
+
+        <div class="proposal-block">
+          <div class="proposal-label">Focus</div>
+          <div class="proposal-value">
+            Consolidare il lavoro completato e preparare il prossimo passaggio operativo.
+          </div>
+        </div>
+
+        <div class="proposal-block">
+          <div class="proposal-label">Prossima azione</div>
+          <div class="proposal-value">
+            Verificare i dettagli aperti e definire il prossimo intervento.
+          </div>
+        </div>
+
+        <div class="proposal-block">
+          <div class="proposal-label">Stato</div>
+          <div class="proposal-value">IN_PROGRESS</div>
+        </div>
+
+        <div class="proposal-block">
+          <div class="proposal-label">Task da creare</div>
+          <div class="proposal-value">
+            Preparare una verifica finale dell'avanzamento.
+          </div>
+        </div>
+
+        <div class="proposal-block">
+          <div class="proposal-label">Timeline</div>
+          <div class="proposal-value">
+            Aggiornamento registrato dalla modalità assistita.
+          </div>
+        </div>
+
+        <button id="save" class="confirm-update" type="button">
+          Conferma aggiornamento
+        </button>
+      </div>
+    </div>
+
+    <div class="section">
+      <label>Task aperte</label>
+      <div id="tasks" class="tasks"></div>
+    </div>
+
+    <div class="section">
+      <label>Ultimi 5 eventi Timeline</label>
+      <div id="timeline" class="timeline"></div>
+    </div>
+
+    <div class="section">
+      <label>Briefing AI</label>
+      <div class="ai-briefing">
+        Il briefing automatico AI sarà disponibile in una prossima versione.
+      </div>
+    </div>
+
+    <div class="section">
+      <label>Nuova task</label>
+      <input id="newTask" type="text">
+    </div>
+
+  </div>
+
+<script>
+
+let loadingCount = 0;
+let statusTimer = null;
+
+function beginLoading() {
+
+  loadingCount++;
+  updateLoading();
+
+}
+
+function endLoading() {
+
+  loadingCount = Math.max(loadingCount - 1, 0);
+  updateLoading();
+
+}
+
+function updateLoading() {
+
+  const active = loadingCount > 0;
+
+  document.getElementById("loading").style.display =
+    active ? "inline" : "none";
+
+  document.getElementById("save").disabled = active;
+  document.getElementById("analyzeUpdate").disabled = active;
+
+}
+
+function showStatus(message, isError) {
+
+  const status = document.getElementById("status");
+
+  if (statusTimer) {
+    clearTimeout(statusTimer);
+  }
+
+  status.textContent = message;
+  status.className = isError ? "error" : "";
+
+  if (!isError) {
+    statusTimer = setTimeout(function() {
+      status.textContent = "";
+    }, 2000);
+  }
+
+}
+
+function loadProjects() {
+
+  beginLoading();
+
+  google.script.run
+    .withSuccessHandler(function(projects) {
+
+      const select = document.getElementById("project");
+
+      select.innerHTML = "";
+
+      projects.forEach(function(p) {
+
+        const option = document.createElement("option");
+
+        option.value = p.id;
+        option.textContent = p.name;
+
+        select.appendChild(option);
+
+      });
+
+      if (projects.length > 0) {
+        loadProject(projects[0].id);
+      }
+
+      endLoading();
+
+    })
+    .withFailureHandler(function(err) {
+
+      showStatus(err.message, true);
+      endLoading();
+
+    })
+    .getProjects();
+
+}
+
+function loadProject(id) {
+
+  if (!id) return;
+
+  beginLoading();
+
+  google.script.run
+    .withSuccessHandler(function(project) {
+
+      if (!project) {
+        endLoading();
+        return;
+      }
+
+      renderBriefing({
+        project: project,
+        openTasks: [],
+        timeline: []
+      });
+      loadProjectBriefing(id);
+      endLoading();
+
+    })
+    .withFailureHandler(function(err) {
+
+      showStatus(err.message, true);
+      endLoading();
+
+    })
+    .getProject(id);
+
+}
+
+function loadProjectBriefing(projectId) {
+
+  beginLoading();
+
+  google.script.run
+    .withSuccessHandler(function(briefing) {
+
+      renderBriefing(briefing);
+      endLoading();
+
+    })
+    .withFailureHandler(function(err) {
+
+      showStatus(err.message, true);
+      endLoading();
+
+    })
+    .getProjectBriefing(projectId);
+
+}
+
+function renderTasks(tasks) {
+
+  const container = document.getElementById("tasks");
+
+  container.textContent = "";
+
+  tasks = (tasks || []).filter(function(task) {
+    return !isCompleted(task);
+  });
+
+  tasks.sort(function(a, b) {
+
+    const aCompleted = isCompleted(a);
+    const bCompleted = isCompleted(b);
+
+    if (aCompleted !== bCompleted) {
+      return aCompleted ? 1 : -1;
+    }
+
+    return String(a.title || "").localeCompare(String(b.title || ""));
+
+  });
+
+  if (tasks.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "Nessuna attività aperta";
+    container.appendChild(empty);
+    return;
+  }
+
+  tasks.forEach(function(task) {
+
+    const row = document.createElement("div");
+    const checkbox = document.createElement("input");
+    const title = document.createElement("span");
+    const completed = isCompleted(task);
+
+    row.className = completed ? "task completed" : "task";
+    checkbox.type = "checkbox";
+    checkbox.checked = completed;
+    checkbox.disabled = completed;
+    title.textContent = task.title;
+
+    checkbox.addEventListener("change", function() {
+
+      if (checkbox.checked) {
+        completeTask(task.id);
+      }
+
+    });
+
+    row.appendChild(checkbox);
+    row.appendChild(title);
+    container.appendChild(row);
+
+  });
+
+}
+
+function renderBriefing(briefing) {
+
+  const project = briefing.project || {};
+
+  document.getElementById("focus").value =
+    project.focus || "";
+
+  document.getElementById("nextAction").value =
+    project.nextAction || "";
+
+  resetAssistedUpdate();
+
+  document.getElementById("updatedAt").textContent =
+    formatDate(project.updatedAt);
+
+  renderProjectStatus(project.status);
+  renderTasks(briefing.openTasks || []);
+  renderTimeline(briefing.timeline || []);
+
+}
+
+function showUpdateProposal() {
+
+  document.getElementById("updateProposal").style.display = "block";
+
+}
+
+function resetAssistedUpdate() {
+
+  document.getElementById("update").value = "";
+  document.getElementById("updateProposal").style.display = "none";
+
+}
+
+function renderProjectStatus(status) {
+
+  const badge = document.getElementById("projectStatus");
+  const value = status || "IN_PROGRESS";
+
+  badge.textContent = value;
+  badge.className = "badge " + getStatusClass(value);
+
+}
+
+function getStatusClass(status) {
+
+  if (status === "WAITING") {
+    return "waiting";
+  }
+
+  if (status === "BLOCKED") {
+    return "blocked";
+  }
+
+  if (status === "COMPLETED") {
+    return "completed";
+  }
+
+  return "in-progress";
+
+}
+
+function renderTimeline(events) {
+
+  const container = document.getElementById("timeline");
+
+  container.textContent = "";
+
+  if (events.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "Nessun evento";
+    container.appendChild(empty);
+    return;
+  }
+
+  events.forEach(function(event) {
+
+    const row = document.createElement("div");
+    const meta = document.createElement("div");
+    const description = document.createElement("div");
+
+    row.className = "timeline-event";
+    meta.className = "timeline-meta";
+    description.className = "timeline-description";
+
+    meta.textContent = formatDate(event.date) + " · " + (event.type || "");
+    description.textContent = event.description || "";
+
+    row.appendChild(meta);
+    row.appendChild(description);
+    container.appendChild(row);
+
+  });
+
+}
+
+function completeTask(id) {
+
+  const projectId = document.getElementById("project").value;
+
+  beginLoading();
+
+  google.script.run
+    .withSuccessHandler(function() {
+
+      loadProjectBriefing(projectId);
+      endLoading();
+
+    })
+    .withFailureHandler(function(err) {
+
+      showStatus(err.message, true);
+      loadProjectBriefing(projectId);
+      endLoading();
+
+    })
+    .completeTask(id);
+
+}
+
+function saveProject() {
+
+  const select = document.getElementById("project");
+
+  const payload = {
+    id: select.value,
+    update: document.getElementById("update").value,
+    focus: document.getElementById("focus").value,
+    nextAction: document.getElementById("nextAction").value,
+    newTask: document.getElementById("newTask").value
+  };
+
+  beginLoading();
+
+  google.script.run
+    .withSuccessHandler(function(project) {
+
+      if (project) {
+        document.getElementById("newTask").value = "";
+        resetAssistedUpdate();
+        loadProject(project.id);
+      }
+
+      showStatus("Salvato ✓", false);
+      endLoading();
+
+    })
+    .withFailureHandler(function(err) {
+
+      showStatus(err.message, true);
+      endLoading();
+
+    })
+    .saveProjectUpdate(payload);
+
+}
+
+function isCompleted(task) {
+
+  return task.status === "Completata" || !!task.completedAt;
+
+}
+
+function formatDate(value) {
+
+  if (!value) {
+    return "-";
+  }
+
+  const date = new Date(value);
+
+  if (isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString("it-IT", {
+    day:"2-digit",
+    month:"2-digit",
+    year:"numeric",
+    hour:"2-digit",
+    minute:"2-digit"
+  });
+
+}
+
+document.addEventListener("DOMContentLoaded", function() {
+
+  loadProjects();
+
+  document
+    .getElementById("project")
+    .addEventListener("change", function() {
+
+      loadProject(this.value);
+
+    });
+
+  document
+    .getElementById("analyzeUpdate")
+    .addEventListener("click", function() {
+
+      showUpdateProposal();
+
+    });
+
+  document
+    .getElementById("save")
+    .addEventListener("click", function() {
+
+      saveProject();
+
+    });
+
+});
+
+</script>
+
+</body>
+</html>
