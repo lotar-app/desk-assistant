@@ -5,8 +5,6 @@
  * Non contiene logica di persistenza e non accede direttamente a Google Sheets.
  */
 
-const MAX_CONTEXT_PROJECTS = 5;
-
 const DeskEngine = {
 
   listProjects(workspace) {
@@ -166,7 +164,7 @@ const DeskEngine = {
     const activeProjects = projects.filter(project => (
       project.status !== CONFIG.PROJECT_STATUS.COMPLETED
     ));
-    const contexts = activeProjects.map(project => (
+    const contexts = projects.map(project => (
       workspaceProjectContext(
         project,
         tasksByProject[String(project.id)] || [],
@@ -174,9 +172,7 @@ const DeskEngine = {
       )
     ));
 
-    contexts.sort((a, b) => (
-      workspaceTimeValue(b.lastActivityAt) - workspaceTimeValue(a.lastActivityAt)
-    ));
+    contexts.sort(workspaceProjectBriefingOrder);
 
     const taskDetails = workspaceOpenTasks
       .filter(task => (
@@ -198,7 +194,10 @@ const DeskEngine = {
     ));
     const executableProjects = contexts.filter(context => (
       context.status !== CONFIG.PROJECT_STATUS.WAITING &&
-      context.status !== CONFIG.PROJECT_STATUS.BLOCKED
+      context.status !== CONFIG.PROJECT_STATUS.BLOCKED &&
+      context.status !== CONFIG.PROJECT_STATUS.COMPLETED &&
+      context.status !== "PAUSED" &&
+      context.status !== "DONE"
     ));
     const recordedPriorities = taskDetails.filter(task => !!task.priority);
     const orphanTasks = openTasks.filter(task => (
@@ -223,7 +222,7 @@ const DeskEngine = {
         overdueTasks: overdueTasks.length,
         dueTodayTasks: dueTodayTasks.length
       },
-      recentContext: contexts.slice(0, MAX_CONTEXT_PROJECTS),
+      recentContext: contexts,
       attentionSignals: {
         overdueTasks: overdueTasks,
         dueTodayTasks: dueTodayTasks,
@@ -511,9 +510,52 @@ function workspaceProjectContext(project, tasks, events) {
       dueDate: workspaceDateValue(task.dueDate)
     })),
     lastEvent: recentEvents.length ? recentEvents[0] : null,
+    lastUpdate: recentEvents.length
+      ? {
+        date: recentEvents[0].date,
+        text: recentEvents[0].description
+      }
+      : {
+        date: "",
+        text: ""
+      },
     recentEvents: recentEvents
   };
 
+}
+
+function workspaceProjectBriefingOrder(a, b) {
+  const statusDifference = workspaceProjectStatusOrder(a.status) -
+    workspaceProjectStatusOrder(b.status);
+
+  if (statusDifference !== 0) {
+    return statusDifference;
+  }
+
+  return workspaceTimeValue(b.lastActivityAt) -
+    workspaceTimeValue(a.lastActivityAt);
+}
+
+function workspaceProjectStatusOrder(status) {
+  const value = String(status || "").trim().toUpperCase();
+
+  if (value === CONFIG.PROJECT_STATUS.IN_PROGRESS) {
+    return 1;
+  }
+
+  if (value === CONFIG.PROJECT_STATUS.WAITING) {
+    return 2;
+  }
+
+  if (value === "PAUSED" || value === CONFIG.PROJECT_STATUS.BLOCKED) {
+    return 3;
+  }
+
+  if (value === "DONE" || value === CONFIG.PROJECT_STATUS.COMPLETED) {
+    return 4;
+  }
+
+  return 5;
 }
 
 function workspaceTaskDetail(task, project, today) {
