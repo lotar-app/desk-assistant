@@ -31,6 +31,16 @@ const ProjectRepository = {
 
   },
 
+  listAll() {
+
+    const values = this.sheet().getDataRange().getValues();
+
+    values.shift();
+
+    return values.map(row => this.fromRow(row));
+
+  },
+
   getById(id) {
 
     const values = this.sheet().getDataRange().getValues();
@@ -41,16 +51,7 @@ const ProjectRepository = {
 
       if (String(row[CONFIG.PROJECT_COLUMNS.ID - 1]).trim() === String(id).trim()) {
 
-        return {
-          id: row[CONFIG.PROJECT_COLUMNS.ID - 1],
-          name: row[CONFIG.PROJECT_COLUMNS.NAME - 1],
-          status: row[CONFIG.PROJECT_COLUMNS.STATUS - 1],
-          focus: row[CONFIG.PROJECT_COLUMNS.FOCUS - 1],
-          owner: row[CONFIG.PROJECT_COLUMNS.OWNER - 1],
-          nextAction: row[CONFIG.PROJECT_COLUMNS.NEXT_ACTION - 1],
-          createdAt: row[CONFIG.PROJECT_COLUMNS.CREATED_AT - 1],
-          updatedAt: row[CONFIG.PROJECT_COLUMNS.UPDATED_AT - 1]
-        };
+        return this.fromRow(row);
 
       }
 
@@ -98,6 +99,21 @@ const ProjectRepository = {
     }
 
     return false;
+
+  },
+
+  fromRow(row) {
+
+    return {
+      id: row[CONFIG.PROJECT_COLUMNS.ID - 1],
+      name: row[CONFIG.PROJECT_COLUMNS.NAME - 1],
+      status: row[CONFIG.PROJECT_COLUMNS.STATUS - 1],
+      focus: row[CONFIG.PROJECT_COLUMNS.FOCUS - 1],
+      owner: row[CONFIG.PROJECT_COLUMNS.OWNER - 1],
+      nextAction: row[CONFIG.PROJECT_COLUMNS.NEXT_ACTION - 1],
+      createdAt: row[CONFIG.PROJECT_COLUMNS.CREATED_AT - 1],
+      updatedAt: row[CONFIG.PROJECT_COLUMNS.UPDATED_AT - 1]
+    };
 
   }
 

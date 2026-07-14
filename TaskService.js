@@ -96,6 +96,17 @@ const TaskService = {
 
   },
 
+  listOpen() {
+
+    return TaskRepository
+      .list()
+      .filter(task => (
+        task.status !== CONFIG.TASK_STATUS.COMPLETED &&
+        !task.completedAt
+      ));
+
+  },
+
   complete(id) {
 
     const now = new Date();

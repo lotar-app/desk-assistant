@@ -39,6 +39,33 @@ const ProjectService = {
     return normalizeProject(ProjectRepository.getById(id));
   },
 
+  listAll() {
+    return ProjectRepository.listAll().map(project => normalizeProject(project));
+  },
+
+  findByName(name) {
+
+    const projectName = String(name || "").trim();
+
+    if (!projectName) {
+      throw new Error("Nome progetto non valido.");
+    }
+
+    const normalizedName = projectName.toLowerCase();
+    const projects = ProjectRepository.list();
+
+    for (const project of projects) {
+
+      if (String(project.name || "").trim().toLowerCase() === normalizedName) {
+        return this.get(project.id);
+      }
+
+    }
+
+    return null;
+
+  },
+
   update(id, data) {
 
     if (!id) {

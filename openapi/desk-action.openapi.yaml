@@ -1,0 +1,212 @@
+openapi: 3.1.0
+info:
+  title: Desk Action API
+  version: 1.3.0
+  description: API for updating Desk and reading project and workspace context.
+servers:
+  - url: https://twilight-rice-7a74.fastmax.workers.dev
+paths:
+  /:
+    post:
+      operationId: updateDesk
+      summary: Update Desk from a conversation
+      description: >
+        Sends a structured project update to Desk when the conversation contains
+        a clear advancement, decision, next action, task, or timeline event.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - projectName
+                - data
+              additionalProperties: false
+              properties:
+                projectName:
+                  type: string
+                  description: >
+                    Human-readable project name. Desk finds the existing project
+                    or creates it when necessary.
+                data:
+                  type: object
+                  required:
+                    - summary
+                    - focus
+                    - nextAction
+                    - status
+                    - newTasks
+                    - completedTasks
+                    - timelineEvent
+                  additionalProperties: false
+                  properties:
+                    summary:
+                      type: string
+                      description: Short factual summary of the update.
+                    focus:
+                      type: string
+                      description: Current operational focus after the update.
+                    nextAction:
+                      type: string
+                      description: Next concrete action to take.
+                    status:
+                      type: string
+                      enum:
+                        - IN_PROGRESS
+                        - WAITING
+                        - DONE
+                        - PAUSED
+                      description: Current project status.
+                    newTasks:
+                      type: array
+                      description: New concrete tasks to create.
+                      items:
+                        type: string
+                    completedTasks:
+                      type: array
+                      description: Exact task IDs to mark as completed.
+                      items:
+                        type: string
+                    timelineEvent:
+                      type: string
+                      description: Concise operational event to record in the timeline.
+      responses:
+        "200":
+          description: Desk update response
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                additionalProperties: true
+                properties:
+                  success:
+                    type: boolean
+                  result:
+                    type: object
+                    additionalProperties: true
+                  error:
+                    type: string
+  /getProject:
+    post:
+      operationId: getProject
+      summary: Read a Desk project
+      description: Returns the project whose human-readable name matches the request.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - projectName
+              additionalProperties: false
+              properties:
+                projectName:
+                  type: string
+                  description: Human-readable name of the project to retrieve.
+      responses:
+        "200":
+          description: Project lookup response
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                  - httpStatus
+                  - result
+                additionalProperties: false
+                properties:
+                  success:
+                    type: boolean
+                  httpStatus:
+                    type: integer
+                  result:
+                    type: object
+                    additionalProperties: true
+                    description: Result returned by Desk.
+  /workspace-briefing:
+    post:
+      operationId: getWorkspaceBriefing
+      summary: Read the current Desk workspace briefing
+      description: >
+        Returns a read-only operational briefing built from projects, open tasks,
+        and timeline events. It provides factual signals and candidate starting
+        points without deciding the user's priorities or modifying Desk.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - action
+              additionalProperties: false
+              properties:
+                action:
+                  type: string
+                  const: getWorkspaceBriefing
+      responses:
+        "200":
+          description: Current read-only Desk workspace briefing
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                additionalProperties: false
+                properties:
+                  success:
+                    type: boolean
+                  briefing:
+                    type: object
+                    additionalProperties: false
+                    properties:
+                      generatedAt:
+                        type: string
+                        format: date-time
+                      date:
+                        type: string
+                        format: date
+                      timezone:
+                        type: string
+                      counts:
+                        type: object
+                        additionalProperties: true
+                      recentContext:
+                        type: array
+                        items:
+                          type: object
+                          additionalProperties: true
+                      attentionSignals:
+                        type: object
+                        additionalProperties: true
+                      recordedPriorities:
+                        type: array
+                        items:
+                          type: object
+                          additionalProperties: true
+                      availableNextActions:
+                        type: array
+                        items:
+                          type: object
+                          additionalProperties: true
+                      waitingContext:
+                        type: array
+                        items:
+                          type: object
+                          additionalProperties: true
+                      candidateStartingPoints:
+                        type: array
+                        items:
+                          type: object
+                          additionalProperties: true
+                      dataQuality:
+                        type: object
+                        additionalProperties: true
+                  error:
+                    type: string

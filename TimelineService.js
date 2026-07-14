@@ -18,3 +18,9 @@ function getLatestTimeline(projectId, limit) {
   return TimelineRepository.latestByProject(projectId, limit || 5);
 
 }
+
+function getTimelineEvents() {
+
+  return TimelineRepository.list();
+
+}

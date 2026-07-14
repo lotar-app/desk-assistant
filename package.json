@@ -1,0 +1,17 @@
+{
+  "name": "desk",
+  "version": "0.1.0",
+  "private": true,
+  "bin": {
+    "desk": "./desk-send.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/link-local-bin.js",
+    "desk-send": "node desk-send.js",
+    "desk": "desk",
+    "test:desk-send": "desk send --projectName \"Aggiornamento sito web\" --summary \"Test invio Desk API\" --focus \"Verificare il client CLI desk-send.\" --nextAction \"Controllare la risposta della Web App.\" --status \"IN_PROGRESS\" --newTasks '[\"Controllare il risultato del test desk-send\"]' --completedTasks '[]' --timelineEvent \"Test inviato dal client CLI desk-send.\""
+  },
+  "dependencies": {
+    "axios": "^1.7.9"
+  }
+}

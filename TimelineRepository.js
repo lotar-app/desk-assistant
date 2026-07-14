@@ -18,14 +18,20 @@ const TimelineRepository = {
     this.sheet().appendRow(data);
   },
 
-  listByProject(projectId) {
+  list() {
 
     const values = this.sheet().getDataRange().getValues();
 
     values.shift();
 
-    return values
-      .map(row => this.fromRow(row))
+    return values.map(row => this.fromRow(row));
+
+  },
+
+  listByProject(projectId) {
+
+    return this
+      .list()
       .filter(event => String(event.projectId).trim() === String(projectId).trim());
 
   },

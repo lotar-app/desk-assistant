@@ -11,41 +11,18 @@ function showUpdateProject() {
 }
 
 function getProjects() {
-  return ProjectRepository.list();
+  return DeskEngine.listProjects();
 }
 
 function getProject(id) {
 
-  const project = ProjectService.get(id);
-
-  if (!project) {
-    throw new Error("Progetto non trovato.");
-  }
-
-  return serializeProject(project);
+  return serializeProject(DeskEngine.getProject(id));
 
 }
 
 function saveProjectUpdate(payload) {
 
-  if (!payload || !payload.id) {
-    throw new Error("Payload non valido.");
-  }
-
-  const project = ProjectService.update(payload.id, {
-    update: payload.update,
-    focus: payload.focus,
-    nextAction: payload.nextAction,
-    status: payload.status
-  });
-
-  const taskTitle = String(payload.newTask || "").trim();
-
-  if (taskTitle) {
-    TaskService.create(payload.id, {
-      title: taskTitle
-    });
-  }
+  const project = DeskEngine.saveProjectUpdate(payload);
 
   return serializeProject(project);
 
@@ -53,51 +30,27 @@ function saveProjectUpdate(payload) {
 
 function getProjectBriefing(projectId) {
 
-  if (!projectId) {
-    throw new Error("Progetto non valido.");
-  }
-
-  const project = ProjectService.get(projectId);
-
-  if (!project) {
-    throw new Error("Progetto non trovato.");
-  }
-
-  const openTasks = TaskService
-    .listByProject(projectId)
-    .filter(task => !isTaskCompleted(task))
-    .map(task => serializeTask(task));
-
-  const timeline = getLatestTimeline(projectId, 5)
-    .map(event => serializeTimelineEvent(event));
+  const briefing = DeskEngine.getProjectBriefing(projectId);
 
   return {
-    project: serializeProject(project),
-    openTasks: openTasks,
-    timeline: timeline
+    project: serializeProject(briefing.project),
+    openTasks: briefing.openTasks.map(task => serializeTask(task)),
+    timeline: briefing.timeline.map(event => serializeTimelineEvent(event))
   };
 
 }
 
 function getProjectTasks(projectId) {
 
-  if (!projectId) {
-    throw new Error("Progetto non valido.");
-  }
-
-  return TaskService
-    .listByProject(projectId)
+  return DeskEngine
+    .listProjectTasks(projectId)
     .map(task => serializeTask(task));
 
 }
 
 function completeTask(id) {
 
-  if (!id) {
-    throw new Error("Attività non valida.");
-  }
-
-  return serializeTask(TaskService.complete(id));
+  return serializeTask(DeskEngine.completeTask(id));
 
 }
 
@@ -155,11 +108,5 @@ function serializeTimelineEvent(event) {
     type: event.type,
     description: event.description
   };
-
-}
-
-function isTaskCompleted(task) {
-
-  return task.status === CONFIG.TASK_STATUS.COMPLETED || !!task.completedAt;
 
 }

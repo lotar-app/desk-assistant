@@ -1,71 +1,69 @@
-# Changelog
+# Desk Assistant - Changelog
 
-Tutte le modifiche rilevanti a Desk sono documentate in questo file.
-
-Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), con adattamento al ciclo di sviluppo interno del progetto.
-
-## [Unreleased]
-
-### Da fare
-
-- Ricerca nella Sidebar.
-- Dashboard V1.
-- Vista Timeline consultabile.
-- Archiviazione progetti.
-- Filtri task.
-
-## [0.1.0] - 2026-07-08
+## v1.3
 
 ### Added
-
-- Configurazione Apps Script con runtime V8, timezone `Europe/Rome` e logging Stackdriver.
-- Integrazione clasp tramite `.clasp.json`.
-- Struttura iniziale del progetto in file `.js` e `.html`.
-- Configurazione centrale `CONFIG` in `Settings.js`.
-- Header fogli in `Constants.js`.
-- Setup iniziale con creazione fogli `Projects`, `Tasks`, `Timeline`, `Settings`.
-- Menu Google Sheets `Desk`.
-- Architettura iniziale Service/Repository per Projects.
-- `ProjectRepository` con append, list, getById e update.
-- `ProjectService` con create, get e update.
-- Creazione progetto da menu.
-- Sidebar `DeskPanel.html`.
-- Apertura Sidebar da `UI.js`.
-- Lettura progetti da Sidebar.
-- Lettura dettaglio progetto da Sidebar.
-- Salvataggio Focus e Prossima azione.
-- Aggiornamento `updatedAt` del progetto.
-- Registrazione Timeline per `PROJECT_CREATED`.
-- Registrazione Timeline per `PROJECT_UPDATED`.
-- `TimelineService.addTimeline(projectId, type, text)`.
-- Modulo Tasks con `TaskRepository`.
-- `TaskRepository` con append, update, list, listByProject e getById.
-- `TaskService` con create, update, listByProject e complete.
-- Creazione task da menu.
-- Creazione task dalla Sidebar.
-- Collegamento task-progetto tramite `ProjectID`.
-- Visualizzazione task nella Sidebar.
-- Completamento task da checkbox nella Sidebar.
-- Registrazione Timeline per `TASK_CREATED`.
-- Registrazione Timeline per `TASK_COMPLETED`.
-- Serializzazione date per risposte `google.script.run`.
-- Messaggio inline `Salvato ✓` nella Sidebar.
-- Indicatore `Caricamento...` nella Sidebar.
-- Lista task con aperte prima e completate dopo.
-- Task completate visualizzate con checkbox selezionata, testo barrato e colore grigio.
+- Introdotto `getWorkspaceBriefing`, il briefing operativo complessivo del workspace.
+- Aggiunta la lettura aggregata e read-only di Projects, Tasks e Timeline.
+- Aggiunta una nuova Action OpenAPI dedicata a `getWorkspaceBriefing`.
+- Aggiunto il comando conversazionale `Desk`, che richiama automaticamente il briefing all'avvio della conversazione.
 
 ### Changed
+- Esteso il routing del Cloudflare Worker per inoltrare le richieste di workspace briefing.
+- Completata l'integrazione GPT → OpenAPI → Worker → Apps Script → Google Sheets per il nuovo flusso.
+- L'autenticazione resta gestita esclusivamente dal Cloudflare Worker; il GPT non riceve né invia credenziali.
 
-- La Sidebar e' diventata il centro operativo principale.
-- Il salvataggio progetto puo' creare una task opzionale nello stesso flusso.
-- Il completamento task ricarica solo l'elenco task, non l'intero progetto.
-- Gli `alert()` sono stati rimossi dai flussi Sidebar.
+### Security
+- Il workspace briefing è completamente read-only e non modifica Projects, Tasks, Timeline o altri dati di Desk.
+- Rimossa la diagnostica temporanea usata durante il debug di `getWorkspaceBriefing`.
 
-### Known Issues
+### Validation
+- Test end-to-end del workspace briefing completati con esito positivo lungo l'intera pipeline.
 
-- `refreshDesk()` e' ancora un placeholder.
-- `Timeline.js` contiene solo una funzione vuota.
-- La Dashboard non e' implementata.
-- La Timeline non ha ancora una vista consultabile.
-- Alcuni flussi menu usano ancora prompt e alert.
-- `setupDesk()` crea i fogli ma non centralizza tutti gli header.
+---
+
+## v1.2 - 2026-07-10
+
+### Added
+- Action OpenAPI getProject.
+- Lettura dei progetti da Desk tramite Cloudflare Worker.
+- Supporto alla consultazione dello stato dei progetti dal Custom GPT.
+
+### Changed
+- L'autenticazione è demandata esclusivamente al Cloudflare Worker.
+- Il Custom GPT non gestisce più direttamente il token.
+- Lo schema OpenAPI utilizza Action dedicate per lettura e aggiornamento.
+- Aggiornate le istruzioni del GPT per utilizzare getProject quando l'utente chiede informazioni su un progetto.
+
+### Fixed
+- Corretto il passaggio del parametro projectName verso getProject.
+- Validata la lettura dei progetti tramite Apps Script.
+- Validato il flusso completo:
+  Custom GPT → OpenAPI → Cloudflare Worker → Apps Script → Google Sheets → risposta al GPT.
+
+### Validation
+- Test Builder completato con successo.
+- Test end-to-end completato con successo.
+- Lettura e scrittura dei progetti funzionanti.
+
+---
+
+## v1.1
+
+### Changed
+- Rimosso il token dalle istruzioni del Custom GPT.
+- Rimosso il token dallo schema OpenAPI.
+- Il Cloudflare Worker aggiunge automaticamente DESK_API_TOKEN prima di inoltrare la richiesta ad Apps Script.
+
+### Validation
+- Aggiornamento dei progetti funzionante tramite Worker.
+
+---
+
+## v1.0
+
+### Initial Release
+- Architettura iniziale completata.
+- Pipeline funzionante:
+  Custom GPT → OpenAPI → Cloudflare Worker → Apps Script → Google Sheets.
+- Primo supporto all'aggiornamento automatico di Desk.
