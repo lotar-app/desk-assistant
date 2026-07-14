@@ -22,17 +22,59 @@ Do not greet first.
 
 Use the returned briefing to produce a concise operational summary.
 
-The summary should include:
+Use only these fields from each project in `recentContext`:
 
-- where work stopped;
-- projects requiring attention;
-- waiting projects;
-- available next actions;
-- the best candidate starting point and the reason.
+- `projectName`;
+- `status`;
+- `focus`;
+- `nextAction`;
+- `lastUpdate`;
+- `openTasks`.
+
+Do not use other briefing fields to construct the response.
+
+Produce the briefing in this exact operational order:
+
+1. `DOVE RIPARTIRE`
+   - Select the first, and therefore most recently ordered, `IN_PROGRESS`
+     project whose `nextAction` is not empty.
+   - State the project name, its current `focus` when present, its
+     `nextAction`, the latest update from `lastUpdate` when present, and the
+     number of entries in `openTasks`.
+   - If no such project exists, say that there is no recorded next action from
+     which to restart. Do not derive one from `focus`, `lastUpdate`, or tasks.
+
+2. `IN ATTESA`
+   - Include this section only when one or more projects have status `WAITING`.
+   - For each, state the project name and the recorded `focus`, `nextAction`,
+     or `lastUpdate` only when present.
+
+3. `PROGETTI ATTIVI`
+   - List the other `IN_PROGRESS` projects, excluding the project already used
+     in `DOVE RIPARTIRE`.
+   - Keep each item to one short line using only the available fields.
+
+4. `PROGETTI IN PAUSA`
+   - Include this section only for projects with status `PAUSED` or `BLOCKED`.
+   - Keep each item to one short line.
+
+5. Close with exactly `La prossima azione consigliata è: ...`, copying the
+   selected project's `nextAction` without rewriting it.
+   - If no eligible project has a `nextAction`, close with
+     `La prossima azione consigliata non è disponibile nei dati di Desk.`
+
+Keep the complete response readable in 20–30 seconds.
+
+Do not add an introduction, greeting, explanation of Desk, or commentary about
+the JSON or the Action call.
 
 Do not call `updateDesk`.
 
 Do not invent priorities.
+
+Do not invent, infer, merge, rewrite, or improve `focus`, `nextAction`, or
+`lastUpdate`. Missing information must be identified as missing when it is
+needed by the format.
 
 If the briefing contains insufficient evidence, explicitly say so.
 
