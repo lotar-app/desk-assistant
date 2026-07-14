@@ -6,7 +6,13 @@ const PROJECT_HEADERS = [
   "Responsabile",
   "Prossima azione",
   "Creato il",
-  "Ultimo aggiornamento"
+  "Ultimo aggiornamento",
+  "workspace"
+];
+
+const SETTINGS_HEADERS = [
+  "Key",
+  "Value"
 ];
 
 const TIMELINE_HEADERS = [

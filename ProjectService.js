@@ -4,15 +4,11 @@
 
 const ProjectService = {
 
-  create(name) {
+  create(name, workspace) {
 
     const now = new Date();
-
-    const id = Utilities.formatDate(
-      now,
-      Session.getScriptTimeZone(),
-      "'PRJ-'yyyyMMddHHmmss"
-    );
+    const id = this.generateId(now);
+    const projectWorkspace = WorkspaceSettings.resolve(workspace);
 
     ProjectRepository.append([
       id,
@@ -22,7 +18,8 @@ const ProjectService = {
       CONFIG.DEFAULT_OWNER,
       "",
       now,
-      now
+      now,
+      projectWorkspace
     ]);
 
     addTimeline(
@@ -35,12 +32,32 @@ const ProjectService = {
 
   },
 
+  generateId(date) {
+    const timestamp = date instanceof Date ? date : new Date();
+
+    if (isNaN(timestamp.getTime())) {
+      throw new Error("Data non valida per la generazione del Project ID.");
+    }
+
+    return Utilities.formatDate(
+      timestamp,
+      Session.getScriptTimeZone(),
+      "'PRJ-'yyyyMMddHHmmss"
+    );
+  },
+
   get(id) {
     return normalizeProject(ProjectRepository.getById(id));
   },
 
   listAll() {
     return ProjectRepository.listAll().map(project => normalizeProject(project));
+  },
+
+  listByWorkspace(workspace) {
+    return ProjectRepository
+      .listByWorkspace(WorkspaceSettings.resolve(workspace))
+      .map(project => normalizeProject(project));
   },
 
   findByName(name) {
@@ -93,7 +110,8 @@ const ProjectService = {
       status: status,
       focus: String(data.focus || ""),
       nextAction: String(data.nextAction || ""),
-      updatedAt: updatedAt
+      updatedAt: updatedAt,
+      workspace: data.workspace
     });
 
     if (!saved) {
@@ -121,6 +139,7 @@ function normalizeProject(project) {
   }
 
   project.status = normalizeProjectStatus(project.status);
+  project.workspace = WorkspaceSettings.normalize(project.workspace);
 
   return project;
 

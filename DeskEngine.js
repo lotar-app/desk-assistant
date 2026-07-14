@@ -9,11 +9,17 @@ const MAX_CONTEXT_PROJECTS = 5;
 
 const DeskEngine = {
 
-  listProjects() {
-    return ProjectRepository.list();
+  listProjects(workspace) {
+    return ProjectRepository
+      .listByWorkspace(WorkspaceSettings.resolve(workspace))
+      .map(project => ({
+        id: project.id,
+        name: project.name,
+        workspace: project.workspace
+      }));
   },
 
-  getProject(projectId) {
+  getProject(projectId, workspace) {
 
     const project = ProjectService.get(projectId);
 
@@ -21,17 +27,24 @@ const DeskEngine = {
       throw new Error("Progetto non trovato.");
     }
 
+    if (
+      WorkspaceSettings.normalize(project.workspace) !==
+      WorkspaceSettings.resolve(workspace)
+    ) {
+      throw new Error("Progetto non trovato nel workspace selezionato.");
+    }
+
     return project;
 
   },
 
-  getProjectBriefing(projectId) {
+  getProjectBriefing(projectId, workspace) {
 
     if (!projectId) {
       throw new Error("Progetto non valido.");
     }
 
-    const project = this.getProject(projectId);
+    const project = this.getProject(projectId, workspace);
 
     return {
       project: project,
@@ -98,16 +111,25 @@ const DeskEngine = {
 
   },
 
-  getWorkspaceBriefing() {
+  getWorkspaceBriefing(workspace) {
 
     const now = new Date();
     const today = workspaceDateKey(now);
-    const projects = ProjectService.listAll();
+    const selectedWorkspace = WorkspaceSettings.resolve(workspace);
+    const allProjects = ProjectService.listAll();
+    const projects = allProjects.filter(project => (
+      WorkspaceSettings.normalize(project.workspace) === selectedWorkspace
+    ));
     const openTasks = TaskService.listOpen();
     const timelineEvents = getTimelineEvents();
     const projectById = {};
+    const allProjectById = {};
     const tasksByProject = {};
     const timelineByProject = {};
+
+    allProjects.forEach(project => {
+      allProjectById[String(project.id)] = project;
+    });
 
     projects.forEach(project => {
       projectById[String(project.id)] = project;
@@ -122,6 +144,10 @@ const DeskEngine = {
         tasksByProject[projectId].push(task);
       }
     });
+
+    const workspaceOpenTasks = openTasks.filter(task => (
+      !!projectById[String(task.projectId)]
+    ));
 
     timelineEvents.forEach(event => {
       const projectId = String(event.projectId);
@@ -152,7 +178,7 @@ const DeskEngine = {
       workspaceTimeValue(b.lastActivityAt) - workspaceTimeValue(a.lastActivityAt)
     ));
 
-    const taskDetails = openTasks
+    const taskDetails = workspaceOpenTasks
       .filter(task => (
         !!projectById[String(task.projectId)] &&
         projectById[String(task.projectId)].status !== CONFIG.PROJECT_STATUS.COMPLETED
@@ -176,15 +202,16 @@ const DeskEngine = {
     ));
     const recordedPriorities = taskDetails.filter(task => !!task.priority);
     const orphanTasks = openTasks.filter(task => (
-      !projectById[String(task.projectId)]
+      !allProjectById[String(task.projectId)]
     ));
-    const tasksInCompletedProjects = openTasks.filter(task => (
+    const tasksInCompletedProjects = workspaceOpenTasks.filter(task => (
       !!projectById[String(task.projectId)] &&
       projectById[String(task.projectId)].status === CONFIG.PROJECT_STATUS.COMPLETED
     ));
 
     return {
       generatedAt: now.toISOString(),
+      workspace: selectedWorkspace,
       date: today,
       timezone: Session.getScriptTimeZone(),
       counts: {
@@ -192,7 +219,7 @@ const DeskEngine = {
         activeProjects: activeProjects.length,
         waitingProjects: waitingProjects.length,
         blockedProjects: blockedProjects.length,
-        openTasks: openTasks.length,
+        openTasks: workspaceOpenTasks.length,
         overdueTasks: overdueTasks.length,
         dueTodayTasks: dueTodayTasks.length
       },
@@ -468,6 +495,7 @@ function workspaceProjectContext(project, tasks, events) {
   return {
     projectId: String(project.id),
     projectName: String(project.name || ""),
+    workspace: WorkspaceSettings.normalize(project.workspace),
     status: project.status,
     focus: String(project.focus || ""),
     nextAction: String(project.nextAction || ""),

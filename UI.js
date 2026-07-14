@@ -64,7 +64,8 @@ function serializeProject(project) {
     owner: project.owner,
     nextAction: project.nextAction,
     createdAt: serializeDate(project.createdAt),
-    updatedAt: serializeDate(project.updatedAt)
+    updatedAt: serializeDate(project.updatedAt),
+    workspace: project.workspace
   };
 
 }

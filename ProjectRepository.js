@@ -26,8 +26,21 @@ const ProjectRepository = {
 
     return values.map(row => ({
       id: row[CONFIG.PROJECT_COLUMNS.ID - 1],
-      name: row[CONFIG.PROJECT_COLUMNS.NAME - 1]
+      name: row[CONFIG.PROJECT_COLUMNS.NAME - 1],
+      workspace: WorkspaceSettings.normalize(
+        row[CONFIG.PROJECT_COLUMNS.WORKSPACE - 1]
+      )
     }));
+
+  },
+
+  listByWorkspace(workspace) {
+
+    const normalizedWorkspace = WorkspaceSettings.normalize(workspace);
+
+    return this.listAll().filter(project => (
+      WorkspaceSettings.normalize(project.workspace) === normalizedWorkspace
+    ));
 
   },
 
@@ -80,6 +93,12 @@ const ProjectRepository = {
             .setValue(data.status);
         }
 
+        if (data.workspace !== undefined) {
+          sheet
+            .getRange(rowIndex, CONFIG.PROJECT_COLUMNS.WORKSPACE)
+            .setValue(WorkspaceSettings.normalize(data.workspace));
+        }
+
         sheet
           .getRange(rowIndex, CONFIG.PROJECT_COLUMNS.FOCUS)
           .setValue(data.focus);
@@ -112,7 +131,10 @@ const ProjectRepository = {
       owner: row[CONFIG.PROJECT_COLUMNS.OWNER - 1],
       nextAction: row[CONFIG.PROJECT_COLUMNS.NEXT_ACTION - 1],
       createdAt: row[CONFIG.PROJECT_COLUMNS.CREATED_AT - 1],
-      updatedAt: row[CONFIG.PROJECT_COLUMNS.UPDATED_AT - 1]
+      updatedAt: row[CONFIG.PROJECT_COLUMNS.UPDATED_AT - 1],
+      workspace: WorkspaceSettings.normalize(
+        row[CONFIG.PROJECT_COLUMNS.WORKSPACE - 1]
+      )
     };
 
   }

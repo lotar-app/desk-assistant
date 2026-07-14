@@ -20,7 +20,13 @@ const CONFIG = {
     OWNER: 5,
     NEXT_ACTION: 6,
     CREATED_AT: 7,
-    UPDATED_AT: 8
+    UPDATED_AT: 8,
+    WORKSPACE: 9
+  },
+
+  SETTINGS_COLUMNS: {
+    KEY: 1,
+    VALUE: 2
   },
 
   TASK_COLUMNS: {
@@ -53,5 +59,6 @@ const CONFIG = {
     NORMAL: "Normale"
   },
 
-  DEFAULT_OWNER: "Max"
+  DEFAULT_OWNER: "Max",
+  DEFAULT_WORKSPACE: "LOTAR"
 };
