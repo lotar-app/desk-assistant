@@ -52,6 +52,12 @@ const MigrationUtils = {
       JSON.stringify(this.canonicalize(right));
   },
 
+  verifyChecksum(value, checksum) {
+    const copy = this.clone(value);
+    delete copy.checksum;
+    return this.checksum(copy) === checksum;
+  },
+
   matches(record, selector) {
     return Object.keys(selector || {}).every(key => (
       this.valuesEqual(record[key], selector[key])

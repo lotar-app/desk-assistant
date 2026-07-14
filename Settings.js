@@ -8,7 +8,8 @@ const CONFIG = {
     PROJECTS: "Projects",
     TASKS: "Tasks",
     TIMELINE: "Timeline",
-    SETTINGS: "Settings"
+    SETTINGS: "Settings",
+    MIGRATION_LOG: "MigrationLog"
   },
 
   PROJECT_COLUMNS: {

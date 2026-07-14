@@ -198,7 +198,22 @@ function createV14DataFoundationManifest() {
       ? 50
       : actionPriority[right.action];
 
-    return leftPriority - rightPriority;
+    if (leftPriority !== rightPriority) {
+      return leftPriority - rightPriority;
+    }
+
+    if (
+      left.action === "DELETE" &&
+      right.action === "DELETE" &&
+      left.sheet === right.sheet &&
+      left.selector._rowNumber !== undefined &&
+      right.selector._rowNumber !== undefined
+    ) {
+      return Number(right.selector._rowNumber) -
+        Number(left.selector._rowNumber);
+    }
+
+    return 0;
   });
 
   operations.forEach((operation, index) => {

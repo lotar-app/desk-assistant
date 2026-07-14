@@ -1,9 +1,22 @@
 const MigrationDataSource = {
 
   readSheet(sheetName) {
-    const sheet = SpreadsheetApp
-      .getActiveSpreadsheet()
-      .getSheetByName(sheetName);
+    return this.readFromSpreadsheet(
+      SpreadsheetApp.getActiveSpreadsheet(),
+      sheetName
+    );
+  },
+
+  forSpreadsheet(spreadsheet) {
+    return {
+      readSheet: sheetName => (
+        MigrationDataSource.readFromSpreadsheet(spreadsheet, sheetName)
+      )
+    };
+  },
+
+  readFromSpreadsheet(spreadsheet, sheetName) {
+    const sheet = spreadsheet.getSheetByName(sheetName);
 
     if (!sheet || sheet.getLastRow() === 0) {
       return {

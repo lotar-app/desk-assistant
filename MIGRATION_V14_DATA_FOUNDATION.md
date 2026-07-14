@@ -187,3 +187,109 @@ ridurre le garanzie read-only della Milestone 1.
 - writer e rollback testati sulla copia;
 - nessuna operazione ambigua nel dry run;
 - approvazione esplicita del report finale.
+
+## Milestone 2A - Motore reale protetto
+
+La Milestone 2A implementa le capacita' mutative necessarie alla futura
+bonifica, ma non autorizza ne' esegue il manifesto operativo v1.4. Il manifesto
+reale conserva `mode: DRY_RUN_ONLY` e viene rifiutato da
+`MigrationSafetyGuard`.
+
+### Backup fisico
+
+`BackupEngine.createPhysical()`:
+
+- crea una copia Google Sheets nello stesso folder, o in un folder esplicito;
+- rilegge integralmente la copia e confronta il checksum con lo snapshot;
+- esporta una copia indipendente XLSX;
+- verifica che l'export sia stato creato e non sia vuoto;
+- restituisce un certificato firmato con ID, checksum e risultati delle
+  verifiche.
+
+La creazione del backup non modifica il database sorgente, ma crea file su
+Google Drive. Non viene invocata automaticamente.
+
+### Writer
+
+`MigrationWriter` supporta `CREATE`, `UPDATE`, `MOVE`, `COMPLETE` e `DELETE`.
+Ogni operazione:
+
+- verifica che il selettore individui esattamente il record atteso;
+- conserva lo stato completo precedente e successivo;
+- rifiuta campi non presenti negli header;
+- preserva i valori Date tramite `MigrationRecordCodec`;
+- interrompe immediatamente l'esecuzione in caso di divergenza.
+
+Le eliminazioni Timeline basate sulla riga auditata sono ordinate in senso
+decrescente, cosi' una cancellazione non altera la posizione delle successive.
+
+### MigrationLog persistente
+
+`MigrationLogRepository` crea, solo durante un'esecuzione autorizzata, il foglio
+tecnico `MigrationLog`. Il log e' separato dalla Timeline e contiene:
+
+- migration e operation ID;
+- sequenza continua;
+- azione e foglio;
+- stato `PLANNED`, `APPLIED`, `FAILED`, `COMPLETED` o `ROLLBACK_APPLIED`;
+- stato precedente e successivo codificato;
+- messaggio e timestamp;
+- checksum per singola voce.
+
+Il repository espone solo append e lettura: non aggiorna e non elimina voci.
+Checksum, header o sequenze alterati rendono il log non valido.
+
+### Executor e controlli di sicurezza
+
+`MigrationExecutor` puo' avviare una migrazione soltanto quando sono vere tutte
+le seguenti condizioni:
+
+1. manifesto in `EXECUTION_APPROVED`;
+2. dry run riuscito;
+3. checksum di manifesto, snapshot e certificato coerenti;
+4. backup fisico verificato e relativo allo stesso Spreadsheet;
+5. conferma strutturata con frase `APPLY <migrationId>`;
+6. lock documento acquisito;
+7. nuova fotografia del database identica a quella del dry run;
+8. nessun log preesistente per la stessa migrazione.
+
+Se la persistenza della voce `APPLIED` fallisce dopo una scrittura, il writer
+esegue immediatamente la compensazione della singola operazione.
+
+### Rollback eseguibile
+
+`RollbackEngine` costruisce il piano inverso dalle sole voci `APPLIED`, in
+ordine inverso, e puo' eseguirlo esclusivamente quando:
+
+- il piano e' marcato eseguibile e il checksum e' valido;
+- il MigrationLog persistente coincide con il piano;
+- il backup fisico e' verificato e appartiene allo stesso Spreadsheet;
+- viene fornita la frase `ROLLBACK <migrationId>`;
+- il lock documento e' acquisito;
+- ogni record coincide ancora con `expectedCurrent`.
+
+Il rollback si interrompe alla prima divergenza e registra ogni compensazione
+come nuova voce append-only.
+
+### Stato operativo dopo la Milestone 2A
+
+- nessun entry point richiama automaticamente backup, executor o rollback;
+- il manifesto v1.4 reale non e' eseguibile;
+- nessun foglio `MigrationLog` viene creato durante deploy o setup;
+- nessuna bonifica e nessuna migrazione Workspace viene effettuata;
+- l'abilitazione del manifesto richiede una nuova review e approvazione.
+
+### Test
+
+`testMigrationExecutionFramework()` usa esclusivamente Spreadsheet, Drive,
+lock ed export simulati. Copre:
+
+- backup fisico e verifica checksum;
+- writer reale sulla fixture;
+- MigrationLog persistente append-only;
+- migrazione completa;
+- rollback completo;
+- preservazione Date;
+- rifiuto del manifesto reale;
+- rifiuto di conferme incomplete;
+- rilevamento della manomissione del log.

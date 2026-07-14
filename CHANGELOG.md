@@ -9,11 +9,17 @@
 - Aggiunti MigrationLog in memoria e Rollback Engine non eseguibile.
 - Aggiunti test isolati che verificano baseline, dry run, divergenze e assenza di scritture.
 - Aggiunta la documentazione tecnica del framework di migrazione.
+- Implementato il motore protetto della Milestone 2A con writer reale e lock applicativo.
+- Aggiunto backup fisico verificato tramite copia Google Sheets ed export XLSX.
+- Aggiunto `MigrationLog` persistente, append-only e firmato per singola voce.
+- Aggiunti rollback eseguibile, precondizioni sullo stato corrente e compensazione in caso di errore del log.
+- Aggiunti test end-to-end su Spreadsheet e Drive simulati.
 
 ### Safety
 - Nessun componente della Milestone 1 modifica Google Sheets.
 - Nessuna bonifica o migrazione Workspace viene eseguita.
-- Il manifesto resta in modalità `DRY_RUN_ONLY` e il rollback produce esclusivamente un piano.
+- Il manifesto reale resta in modalità `DRY_RUN_ONLY`; il rollback eseguibile richiede un piano autorizzato e conferma esplicita.
+- Il manifesto operativo v1.4 resta non autorizzato e nessun entry point mutativo viene eseguito automaticamente.
 
 ---
 

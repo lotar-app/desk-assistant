@@ -29,3 +29,17 @@ const TASK_HEADERS = [
   "UpdatedAt",
   "CompletedAt"
 ];
+
+const MIGRATION_LOG_HEADERS = [
+  "MigrationID",
+  "Sequence",
+  "OperationID",
+  "Action",
+  "Sheet",
+  "Status",
+  "Before",
+  "After",
+  "Message",
+  "RecordedAt",
+  "EntryChecksum"
+];
