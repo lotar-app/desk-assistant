@@ -1,5 +1,22 @@
 # Desk Assistant - Changelog
 
+## v1.4 - Unreleased
+
+### Added
+- Introdotto il framework read-only della Milestone 1 Data Foundation.
+- Aggiunti Backup Engine, Baseline Validator e Dry Run Engine.
+- Aggiunti manifesto versionato della migrazione v1.4 e checksum SHA-256.
+- Aggiunti MigrationLog in memoria e Rollback Engine non eseguibile.
+- Aggiunti test isolati che verificano baseline, dry run, divergenze e assenza di scritture.
+- Aggiunta la documentazione tecnica del framework di migrazione.
+
+### Safety
+- Nessun componente della Milestone 1 modifica Google Sheets.
+- Nessuna bonifica o migrazione Workspace viene eseguita.
+- Il manifesto resta in modalità `DRY_RUN_ONLY` e il rollback produce esclusivamente un piano.
+
+---
+
 ## v1.3
 
 ### Added
