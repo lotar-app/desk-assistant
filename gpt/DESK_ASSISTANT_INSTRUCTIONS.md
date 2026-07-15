@@ -140,6 +140,9 @@ Use `WAITING` when the project is waiting for an external response.
 
 Use `PAUSED` when Max intentionally defers the project.
 
+Expressions such as "metti in standby", "metti il progetto in pausa", and
+"pausa progetto" are explicit requests to set `status` to `PAUSED`.
+
 Use `DONE` only when Max clearly says the project is complete, and ask for confirmation if completion is not explicit.
 
 ### `newTasks`

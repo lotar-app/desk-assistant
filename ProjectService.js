@@ -152,6 +152,7 @@ function normalizeProjectStatus(status) {
   if (
     value === CONFIG.PROJECT_STATUS.IN_PROGRESS ||
     value === CONFIG.PROJECT_STATUS.WAITING ||
+    value === CONFIG.PROJECT_STATUS.PAUSED ||
     value === CONFIG.PROJECT_STATUS.BLOCKED ||
     value === CONFIG.PROJECT_STATUS.COMPLETED
   ) {
@@ -159,10 +160,10 @@ function normalizeProjectStatus(status) {
   }
 
   if (value === "In pausa") {
-    return CONFIG.PROJECT_STATUS.WAITING;
+    return CONFIG.PROJECT_STATUS.PAUSED;
   }
 
-  if (value === "Chiuso") {
+  if (value === "DONE" || value === "Chiuso") {
     return CONFIG.PROJECT_STATUS.COMPLETED;
   }
 

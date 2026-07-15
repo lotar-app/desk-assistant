@@ -196,8 +196,7 @@ const DeskEngine = {
       context.status !== CONFIG.PROJECT_STATUS.WAITING &&
       context.status !== CONFIG.PROJECT_STATUS.BLOCKED &&
       context.status !== CONFIG.PROJECT_STATUS.COMPLETED &&
-      context.status !== "PAUSED" &&
-      context.status !== "DONE"
+      context.status !== CONFIG.PROJECT_STATUS.PAUSED
     ));
     const recordedPriorities = taskDetails.filter(task => !!task.priority);
     const orphanTasks = openTasks.filter(task => (
@@ -547,7 +546,10 @@ function workspaceProjectStatusOrder(status) {
     return 2;
   }
 
-  if (value === "PAUSED" || value === CONFIG.PROJECT_STATUS.BLOCKED) {
+  if (
+    value === CONFIG.PROJECT_STATUS.PAUSED ||
+    value === CONFIG.PROJECT_STATUS.BLOCKED
+  ) {
     return 3;
   }
 

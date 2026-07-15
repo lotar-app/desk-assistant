@@ -17,6 +17,104 @@ function testConversationEngine() {
 
 }
 
+function testConversationEnginePersistsPausedStatus() {
+
+  const originalFindByName = ProjectService.findByName;
+  const originalGetById = ProjectRepository.getById;
+  const originalUpdate = ProjectRepository.update;
+  const originalAddTimeline = addTimeline;
+  const project = {
+    id: "PRJ-SCANNER",
+    name: "Scanner di rete",
+    status: CONFIG.PROJECT_STATUS.IN_PROGRESS,
+    focus: "Scansione rete",
+    nextAction: "Riprendere la scansione",
+    workspace: CONFIG.DEFAULT_WORKSPACE
+  };
+  let savedUpdate = null;
+  let timelineEvent = null;
+
+  try {
+
+    ProjectService.findByName = function() {
+      return project;
+    };
+
+    ProjectRepository.getById = function() {
+      return project;
+    };
+
+    ProjectRepository.update = function(id, data) {
+      savedUpdate = data;
+      project.status = data.status;
+      return id === project.id;
+    };
+
+    addTimeline = function(projectId, type, description) {
+      timelineEvent = {
+        projectId: projectId,
+        type: type,
+        description: description
+      };
+    };
+
+    ConversationEngine.processConversationUpdate("Scanner di rete", {
+      summary: "Progetto messo in standby.",
+      status: "PAUSED",
+      newTasks: [],
+      completedTasks: [],
+      timelineEvent: "Progetto messo in standby"
+    });
+
+    assertConversationEngine(
+      savedUpdate && savedUpdate.status === CONFIG.PROJECT_STATUS.PAUSED,
+      "Lo status PAUSED non raggiunge il repository Projects."
+    );
+    assertConversationEngine(
+      project.status === CONFIG.PROJECT_STATUS.PAUSED,
+      "Il progetto conserva lo status precedente."
+    );
+    assertConversationEngine(
+      timelineEvent && timelineEvent.projectId === project.id,
+      "La Timeline non viene aggiornata nella stessa operazione logica."
+    );
+
+    return {
+      success: true,
+      status: project.status,
+      timelineEvent: timelineEvent.description
+    };
+
+  } finally {
+
+    ProjectService.findByName = originalFindByName;
+    ProjectRepository.getById = originalGetById;
+    ProjectRepository.update = originalUpdate;
+    addTimeline = originalAddTimeline;
+
+  }
+
+}
+
+function testProjectStatusAliases() {
+
+  assertConversationEngine(
+    normalizeProjectStatus("PAUSED") === CONFIG.PROJECT_STATUS.PAUSED,
+    "PAUSED non viene riconosciuto."
+  );
+  assertConversationEngine(
+    normalizeProjectStatus("In pausa") === CONFIG.PROJECT_STATUS.PAUSED,
+    "L'alias In pausa non viene convertito in PAUSED."
+  );
+  assertConversationEngine(
+    normalizeProjectStatus("DONE") === CONFIG.PROJECT_STATUS.COMPLETED,
+    "DONE non viene convertito in COMPLETED."
+  );
+
+  return { success: true };
+
+}
+
 function testWorkspaceBriefing() {
 
   const originalProjectListAll = ProjectRepository.listAll;
@@ -102,6 +200,14 @@ function testWorkspaceBriefingApi() {
 }
 
 function assertWorkspaceBriefing(condition, message) {
+
+  if (!condition) {
+    throw new Error(message);
+  }
+
+}
+
+function assertConversationEngine(condition, message) {
 
   if (!condition) {
     throw new Error(message);
