@@ -8,7 +8,7 @@ const ProjectService = {
 
     const now = new Date();
     const id = this.generateId(now);
-    const projectWorkspace = WorkspaceSettings.resolve(workspace);
+    const projectWorkspace = WorkspaceService.resolveForAssignment(workspace).id;
 
     ProjectRepository.append([
       id,
@@ -47,7 +47,7 @@ const ProjectService = {
   },
 
   get(id) {
-    return normalizeProject(ProjectRepository.getById(id));
+    return normalizeProject(ProjectRepository.getById(id), true);
   },
 
   listAll() {
@@ -55,8 +55,9 @@ const ProjectService = {
   },
 
   listByWorkspace(workspace) {
+    const selectedWorkspace = WorkspaceService.resolveForAssignment(workspace);
     return ProjectRepository
-      .listByWorkspace(WorkspaceSettings.resolve(workspace))
+      .listByWorkspace(selectedWorkspace.id)
       .map(project => normalizeProject(project));
   },
 
@@ -111,7 +112,7 @@ const ProjectService = {
       focus: String(data.focus || ""),
       nextAction: String(data.nextAction || ""),
       updatedAt: updatedAt,
-      workspace: data.workspace
+      workspaceId: data.workspaceId
     });
 
     if (!saved) {
@@ -132,14 +133,21 @@ const ProjectService = {
 
 };
 
-function normalizeProject(project) {
+function normalizeProject(project, includeWorkspaceName) {
 
   if (!project) {
     return null;
   }
 
   project.status = normalizeProjectStatus(project.status);
-  project.workspace = WorkspaceSettings.normalize(project.workspace);
+  project.workspaceId = WorkspaceSettings.normalize(project.workspaceId);
+
+  if (includeWorkspaceName) {
+    const workspace = WorkspaceService.resolve(project.workspaceId, {
+      includeDisabled: true
+    });
+    project.workspace = workspace ? workspace.name : "";
+  }
 
   return project;
 

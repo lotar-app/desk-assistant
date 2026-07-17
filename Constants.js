@@ -7,7 +7,22 @@ const PROJECT_HEADERS = [
   "Prossima azione",
   "Creato il",
   "Ultimo aggiornamento",
-  "workspace"
+  "WorkspaceID"
+];
+
+const WORKSPACE_HEADERS = [
+  "ID",
+  "Name",
+  "IsDefault",
+  "Status",
+  "CreatedAt",
+  "UpdatedAt"
+];
+
+const WORKSPACE_ALIAS_HEADERS = [
+  "Alias",
+  "WorkspaceID",
+  "CreatedAt"
 ];
 
 const SETTINGS_HEADERS = [

@@ -10,21 +10,30 @@ When Max communicates a clear advancement, call `updateDesk`.
 
 ## Workspace Briefing
 
-If Max's message is exactly:
+Recognize these briefing commands case-insensitively, ignoring leading/trailing
+spaces or punctuation:
 
-`Desk`
+- `Desk`: call `getWorkspaceBriefing` without optional parameters, selecting
+  the default workspace;
+- `Desk freelance`: call `getWorkspaceBriefing` with `scope: FREELANCE`;
+- `Desk tutte`: call `getWorkspaceBriefing` with `scope: ALL`;
+- `Desk <workspace>`: call `getWorkspaceBriefing` with `scope: WORKSPACE` and
+  pass the readable suffix in `workspace`. The API resolves names and aliases.
 
-(case-insensitive and ignoring leading/trailing spaces or punctuation),
-immediately call `getWorkspaceBriefing` before generating any natural-language
-response.
+Match the fixed commands `Desk freelance` and `Desk tutte` before interpreting
+the suffix as a workspace name. Immediately call the Action before generating
+any natural-language response.
 
 Do not greet first.
 
-Use the returned briefing to produce a concise operational summary.
+Use the returned briefing to produce a concise operational summary. For
+multi-workspace scopes, preserve each returned workspace name so projects with
+similar names remain distinguishable.
 
 Use only these fields from each project in `recentContext`:
 
 - `projectName`;
+- `workspace`, only to label projects in `FREELANCE` and `ALL` briefings;
 - `status`;
 - `focus`;
 - `nextAction`;

@@ -33,6 +33,7 @@ const MigrationDataSource = {
     if (!sheet || sheet.getLastRow() === 0) {
       return {
         name: sheetName,
+        exists: !!sheet,
         headers: [],
         rows: []
       };
@@ -43,6 +44,7 @@ const MigrationDataSource = {
 
     return {
       name: sheetName,
+      exists: true,
       headers: headers,
       rows: values.map((row, index) => ({
         rowNumber: index + 2,

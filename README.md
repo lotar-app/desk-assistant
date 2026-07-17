@@ -79,7 +79,7 @@ ProjectService + TaskService + TimelineService
 Google Sheets
 ```
 
-Quando l'utente scrive `Desk`, il GPT richiama automaticamente `getWorkspaceBriefing`. L'Action invia la richiesta al nuovo percorso del Worker; il Worker aggiunge le credenziali, inoltra la richiesta ad Apps Script e restituisce al GPT esclusivamente il payload reale dell'API. Apps Script legge e aggrega i dati dei tre domini senza eseguire operazioni di scrittura, quindi il GPT presenta il briefing in forma conversazionale. L'autenticazione è gestita esclusivamente dal Worker e non viene esposta al GPT o allo schema OpenAPI.
+Quando l'utente scrive `Desk`, il GPT richiama automaticamente `getWorkspaceBriefing` senza parametri opzionali e Apps Script seleziona il workspace predefinito. `Desk freelance` usa lo scope `FREELANCE`, `Desk tutte` usa `ALL` e `Desk <workspace>` risolve nome o alias prima di usare il relativo Workspace ID. L'Action invia la richiesta al percorso del Worker; il Worker aggiunge le credenziali, inoltra la richiesta ad Apps Script e restituisce al GPT esclusivamente il payload reale dell'API. Apps Script legge e aggrega i dati senza eseguire operazioni di scrittura. L'autenticazione è gestita esclusivamente dal Worker e non viene esposta al GPT o allo schema OpenAPI.
 
 Le tre Action hanno responsabilità distinte:
 
@@ -95,17 +95,21 @@ Le tre Action hanno responsabilità distinte:
 - `UI.js`: endpoint server della Sidebar e serializzazione di progetti, attività, Timeline e date.
 - `Menu.js`: menu Google Sheets per creare progetti e attività, aprire la Sidebar e richiamare il placeholder della Dashboard.
 - `Projects.js` e `Tasks.js`: handler legacy o di fallback basati sui prompt del menu.
-- `Setup.js`: creazione iniziale dei fogli `Projects`, `Tasks`, `Timeline` e `Settings`.
+- `Setup.js`: creazione iniziale dei fogli applicativi, inclusi `Workspaces` e `WorkspaceAliases`.
 - `Settings.js` e `Constants.js`: configurazione di fogli, colonne, stati, valori predefiniti e header.
 
 ### Dominio e persistenza
 
 - `ProjectService.js` / `ProjectRepository.js`: creazione, ricerca, lettura e aggiornamento dei progetti.
+- `WorkspaceService.js`, `WorkspaceRepository.js` e `WorkspaceAliasRepository.js`: identità, nomi, alias e appartenenza ai workspace.
+- `WorkspaceDataQualityService.js`: diagnostica amministrativa di workspace, riferimenti e record orfani.
+- `WorkspaceMigration.js`: preflight read-only e generazione delle sole operazioni derivate da mapping esplicito.
 - `TaskService.js` / `TaskRepository.js`: creazione, lettura, aggiornamento e completamento delle attività.
 - `TimelineService.js` / `TimelineRepository.js`: registrazione append-only e lettura degli eventi recenti.
 - `DeskEngine.js`: orchestrazione di briefing, aggiornamenti progetto, attività, Timeline e aggiornamenti preparati.
 - `MemoryUpdate.js`: contratto e validazione degli aggiornamenti strutturati provenienti dall'assistente.
 - `ConversationEngine.js`: ricerca del progetto per nome e applicazione degli aggiornamenti conversazionali; crea il progetto se un aggiornamento riguarda un nome non ancora presente.
+- `WorkspaceAdmin.js`: entry point amministrativi per gestione, assegnazione, rinomina, disattivazione e merge dei workspace.
 
 ### API e integrazione GPT
 

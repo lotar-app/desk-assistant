@@ -6,11 +6,11 @@
 
 const ConversationEngine = {
 
-  getWorkspaceBriefing(workspace) {
+  getWorkspaceBriefing(request) {
 
     return {
       success: true,
-      briefing: DeskEngine.getWorkspaceBriefing(workspace)
+      briefing: DeskEngine.getWorkspaceBriefing(request)
     };
 
   },

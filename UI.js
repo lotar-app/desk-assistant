@@ -65,7 +65,8 @@ function serializeProject(project) {
     nextAction: project.nextAction,
     createdAt: serializeDate(project.createdAt),
     updatedAt: serializeDate(project.updatedAt),
-    workspace: project.workspace
+    workspaceId: project.workspaceId,
+    workspace: project.workspace || ""
   };
 
 }

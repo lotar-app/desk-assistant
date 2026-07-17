@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Desk Action API
-  version: 1.3.0
+  version: 1.4.0
   description: API for updating Desk and reading project and workspace context.
 servers:
   - url: https://twilight-rice-7a74.fastmax.workers.dev
@@ -149,6 +149,21 @@ paths:
                 action:
                   type: string
                   const: getWorkspaceBriefing
+                scope:
+                  type: string
+                  enum:
+                    - PRIMARY
+                    - FREELANCE
+                    - ALL
+                    - WORKSPACE
+                  default: PRIMARY
+                  description: Optional briefing selection. Omission selects the default workspace.
+                workspaceId:
+                  type: string
+                  description: Stable Workspace ID, used with WORKSPACE scope when already known.
+                workspace:
+                  type: string
+                  description: Human-readable workspace name or alias, resolved before briefing execution.
       responses:
         "200":
           description: Current read-only Desk workspace briefing
@@ -158,55 +173,83 @@ paths:
                 type: object
                 required:
                   - success
+                  - httpStatus
+                  - result
                 additionalProperties: false
                 properties:
                   success:
                     type: boolean
-                  briefing:
+                  httpStatus:
+                    type: integer
+                  result:
                     type: object
                     additionalProperties: false
+                    required:
+                      - success
                     properties:
-                      generatedAt:
-                        type: string
-                        format: date-time
-                      date:
-                        type: string
-                        format: date
-                      timezone:
-                        type: string
-                      counts:
+                      success:
+                        type: boolean
+                      briefing:
                         type: object
-                        additionalProperties: true
-                      recentContext:
-                        type: array
-                        items:
-                          type: object
-                          additionalProperties: true
-                      attentionSignals:
-                        type: object
-                        additionalProperties: true
-                      recordedPriorities:
-                        type: array
-                        items:
-                          type: object
-                          additionalProperties: true
-                      availableNextActions:
-                        type: array
-                        items:
-                          type: object
-                          additionalProperties: true
-                      waitingContext:
-                        type: array
-                        items:
-                          type: object
-                          additionalProperties: true
-                      candidateStartingPoints:
-                        type: array
-                        items:
-                          type: object
-                          additionalProperties: true
-                      dataQuality:
-                        type: object
-                        additionalProperties: true
-                  error:
-                    type: string
+                        additionalProperties: false
+                        properties:
+                          generatedAt:
+                            type: string
+                            format: date-time
+                          date:
+                            type: string
+                            format: date
+                          timezone:
+                            type: string
+                          scope:
+                            type: string
+                          workspaceId:
+                            type: string
+                          workspace:
+                            type: string
+                          workspaces:
+                            type: array
+                            items:
+                              type: object
+                              additionalProperties: false
+                              properties:
+                                id:
+                                  type: string
+                                name:
+                                  type: string
+                          counts:
+                            type: object
+                            additionalProperties: true
+                          recentContext:
+                            type: array
+                            items:
+                              type: object
+                              additionalProperties: true
+                          attentionSignals:
+                            type: object
+                            additionalProperties: true
+                          recordedPriorities:
+                            type: array
+                            items:
+                              type: object
+                              additionalProperties: true
+                          availableNextActions:
+                            type: array
+                            items:
+                              type: object
+                              additionalProperties: true
+                          waitingContext:
+                            type: array
+                            items:
+                              type: object
+                              additionalProperties: true
+                          candidateStartingPoints:
+                            type: array
+                            items:
+                              type: object
+                              additionalProperties: true
+                          dataQuality:
+                            type: object
+                            additionalProperties: true
+                      error:
+                        type: string

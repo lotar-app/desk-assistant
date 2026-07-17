@@ -3,6 +3,10 @@
 ## v1.4 - Unreleased
 
 ### Added
+- Introdotta l'entità Workspace con ID immutabili, stato, default e nomi modificabili.
+- Aggiunti alias multipli, diagnostica amministrativa e mapping di migrazione esplicito per Project ID.
+- Aggiunti gli scope briefing `PRIMARY`, `FREELANCE`, `ALL` e `WORKSPACE`.
+- Aggiunti test isolati per filtri, alias, assegnazione, rinomina, merge e routing API.
 - Introdotto il framework read-only della Milestone 1 Data Foundation.
 - Aggiunti Backup Engine, Baseline Validator e Dry Run Engine.
 - Aggiunti manifesto versionato della migrazione v1.4 e checksum SHA-256.

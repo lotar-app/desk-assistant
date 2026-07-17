@@ -9,6 +9,8 @@ const CONFIG = {
     TASKS: "Tasks",
     TIMELINE: "Timeline",
     SETTINGS: "Settings",
+    WORKSPACES: "Workspaces",
+    WORKSPACE_ALIASES: "WorkspaceAliases",
     MIGRATION_LOG: "MigrationLog"
   },
 
@@ -21,12 +23,27 @@ const CONFIG = {
     NEXT_ACTION: 6,
     CREATED_AT: 7,
     UPDATED_AT: 8,
-    WORKSPACE: 9
+    WORKSPACE_ID: 9
   },
 
   SETTINGS_COLUMNS: {
     KEY: 1,
     VALUE: 2
+  },
+
+  WORKSPACE_COLUMNS: {
+    ID: 1,
+    NAME: 2,
+    IS_DEFAULT: 3,
+    STATUS: 4,
+    CREATED_AT: 5,
+    UPDATED_AT: 6
+  },
+
+  WORKSPACE_ALIAS_COLUMNS: {
+    ALIAS: 1,
+    WORKSPACE_ID: 2,
+    CREATED_AT: 3
   },
 
   TASK_COLUMNS: {
@@ -60,6 +77,17 @@ const CONFIG = {
     NORMAL: "Normale"
   },
 
-  DEFAULT_OWNER: "Max",
-  DEFAULT_WORKSPACE: "LOTAR"
+  WORKSPACE_STATUS: {
+    ACTIVE: "ACTIVE",
+    DISABLED: "DISABLED"
+  },
+
+  WORKSPACE_SCOPE: {
+    PRIMARY: "PRIMARY",
+    FREELANCE: "FREELANCE",
+    ALL: "ALL",
+    WORKSPACE: "WORKSPACE"
+  },
+
+  DEFAULT_OWNER: "Max"
 };

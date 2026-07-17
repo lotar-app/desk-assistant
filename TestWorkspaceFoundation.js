@@ -1,15 +1,32 @@
 function testWorkspaceFoundation() {
-  const originalSettingsGet = WorkspaceSettings.get;
   const originalAppend = ProjectRepository.append;
   const originalAddTimeline = addTimeline;
   const originalProjectListAll = ProjectService.listAll;
   const originalTaskListOpen = TaskService.listOpen;
   const originalTimelineList = TimelineRepository.list;
+  const originalWorkspaceList = WorkspaceService.list;
+  const originalWorkspaceDefault = WorkspaceService.getDefault;
+  const originalWorkspaceResolve = WorkspaceService.resolve;
+  const originalWorkspaceResolveForAssignment = WorkspaceService.resolveForAssignment;
   let appendedProject = null;
 
   try {
-    WorkspaceSettings.get = function(key) {
-      return key === "defaultWorkspace" ? "LOTAR" : "";
+    const testWorkspaces = [
+      { id: "WS0001", name: "Lotar", isDefault: true, status: "ACTIVE" },
+      { id: "WS0002", name: "Max", isDefault: false, status: "ACTIVE" }
+    ];
+    WorkspaceService.list = function() { return testWorkspaces; };
+    WorkspaceService.getDefault = function() { return testWorkspaces[0]; };
+    WorkspaceService.resolve = function(value) {
+      const key = String(value || "").trim().toLowerCase();
+      return testWorkspaces.find(workspace => (
+        workspace.id.toLowerCase() === key || workspace.name.toLowerCase() === key
+      )) || null;
+    };
+    WorkspaceService.resolveForAssignment = function(value) {
+      const workspace = value ? this.resolve(value) : this.getDefault();
+      if (!workspace) throw new Error("Workspace non trovato.");
+      return workspace;
     };
 
     ProjectRepository.append = function(row) {
@@ -22,7 +39,7 @@ function testWorkspaceFoundation() {
 
     assertWorkspaceFoundation(!!projectId, "Project ID non generato.");
     assertWorkspaceFoundation(
-      appendedProject[CONFIG.PROJECT_COLUMNS.WORKSPACE - 1] === "LOTAR",
+      appendedProject[CONFIG.PROJECT_COLUMNS.WORKSPACE_ID - 1] === "WS0001",
       "Il progetto non usa il workspace predefinito."
     );
 
@@ -30,36 +47,37 @@ function testWorkspaceFoundation() {
       return [
         workspaceFoundationProject(
           "PRJ-DONE",
-          "LOTAR",
+          "WS0001",
           CONFIG.PROJECT_STATUS.COMPLETED,
           "2026-07-14T12:00:00.000Z",
           ""
         ),
         workspaceFoundationProject(
           "PRJ-WAITING",
-          "LOTAR",
+          "WS0001",
           CONFIG.PROJECT_STATUS.WAITING,
           "2026-07-12T12:00:00.000Z"
         ),
         workspaceFoundationProject(
           "PRJ-IN-PROGRESS-OLD",
-          "LOTAR",
+          "WS0001",
           CONFIG.PROJECT_STATUS.IN_PROGRESS,
           "2026-07-10T12:00:00.000Z"
         ),
         workspaceFoundationProject(
           "PRJ-BLOCKED",
-          "LOTAR",
+          "WS0001",
           CONFIG.PROJECT_STATUS.BLOCKED,
           "2026-07-13T12:00:00.000Z"
         ),
         workspaceFoundationProject(
           "PRJ-IN-PROGRESS-NEW",
-          "LOTAR",
+          "WS0001",
           CONFIG.PROJECT_STATUS.IN_PROGRESS,
           "2026-07-11T12:00:00.000Z"
         ),
-        workspaceFoundationProject("PRJ-MAX", "MAX")
+        workspaceFoundationProject("PRJ-MAX", "WS0002"),
+        workspaceFoundationProject("PRJ-UNCLASSIFIED", "")
       ];
     };
 
@@ -76,16 +94,25 @@ function testWorkspaceFoundation() {
         projectId: "PRJ-IN-PROGRESS-OLD",
         type: "PROJECT_UPDATED",
         description: "Ultimo evento disponibile"
+      }, {
+        date: new Date("2026-07-14T09:00:00.000Z"),
+        projectId: "PRJ-MAX",
+        type: "PROJECT_UPDATED",
+        description: "Evento workspace Max"
       }];
     };
 
     const defaultBriefing = DeskEngine.getWorkspaceBriefing();
     const maxBriefing = DeskEngine.getWorkspaceBriefing("max");
+    const freelanceBriefing = DeskEngine.getWorkspaceBriefing({
+      scope: "FREELANCE"
+    });
+    const allBriefing = DeskEngine.getWorkspaceBriefing({ scope: "ALL" });
 
     JSON.stringify(defaultBriefing);
 
     assertWorkspaceFoundation(
-      defaultBriefing.workspace === "LOTAR" &&
+      defaultBriefing.workspaceId === "WS0001" &&
       defaultBriefing.counts.projects === 5 &&
       defaultBriefing.counts.openTasks === 1,
       "Il briefing predefinito non isola LOTAR."
@@ -97,10 +124,25 @@ function testWorkspaceFoundation() {
       "La struttura precedente del briefing non è valida."
     );
     assertWorkspaceFoundation(
-      maxBriefing.workspace === "MAX" &&
+      maxBriefing.workspaceId === "WS0002" &&
+      maxBriefing.workspaces[0].id === "WS0002" &&
       maxBriefing.counts.projects === 1 &&
       maxBriefing.counts.openTasks === 1,
       "Il briefing esplicito non isola MAX."
+    );
+    assertWorkspaceFoundation(
+      freelanceBriefing.counts.projects === 1 &&
+      freelanceBriefing.recentContext[0].projectId === "PRJ-MAX" &&
+      freelanceBriefing.recentContext[0].openTasks[0].taskId === "TSK-MAX" &&
+      freelanceBriefing.recentContext[0].lastUpdate.text === "Evento workspace Max",
+      "Il briefing freelance non filtra progetti, task o Timeline."
+    );
+    assertWorkspaceFoundation(
+      allBriefing.counts.projects === 6 &&
+      allBriefing.recentContext.every(project => (
+        project.projectId !== "PRJ-UNCLASSIFIED"
+      )),
+      "Il briefing tutte include dati non classificati o perde workspace validi."
     );
     assertWorkspaceFoundation(
       defaultBriefing.recentContext.map(project => project.projectId).join(",") ===
@@ -122,10 +164,13 @@ function testWorkspaceFoundation() {
     return {
       success: true,
       defaultWorkspace: defaultBriefing.workspace,
-      explicitWorkspace: maxBriefing.workspace
+      explicitWorkspace: maxBriefing.workspaceId
     };
   } finally {
-    WorkspaceSettings.get = originalSettingsGet;
+    WorkspaceService.list = originalWorkspaceList;
+    WorkspaceService.getDefault = originalWorkspaceDefault;
+    WorkspaceService.resolve = originalWorkspaceResolve;
+    WorkspaceService.resolveForAssignment = originalWorkspaceResolveForAssignment;
     ProjectRepository.append = originalAppend;
     addTimeline = originalAddTimeline;
     ProjectService.listAll = originalProjectListAll;
@@ -144,7 +189,7 @@ function workspaceFoundationProject(id, workspace, status, updatedAt, nextAction
     nextAction: nextAction === undefined ? "Prossima azione" : nextAction,
     createdAt: new Date(),
     updatedAt: updatedAt ? new Date(updatedAt) : new Date(),
-    workspace: workspace
+    workspaceId: workspace
   };
 }
 

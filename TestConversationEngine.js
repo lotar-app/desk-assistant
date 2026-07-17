@@ -29,7 +29,7 @@ function testConversationEnginePersistsPausedStatus() {
     status: CONFIG.PROJECT_STATUS.IN_PROGRESS,
     focus: "Scansione rete",
     nextAction: "Riprendere la scansione",
-    workspace: CONFIG.DEFAULT_WORKSPACE
+    workspaceId: "WS0001"
   };
   let savedUpdate = null;
   let timelineEvent = null;
@@ -196,6 +196,64 @@ function testWorkspaceBriefingApi() {
   assertWorkspaceBriefing(!!data.briefing, "Briefing API mancante.");
 
   return data;
+
+}
+
+function testWorkspaceBriefingApiRouting() {
+
+  const originalBriefing = ConversationEngine.getWorkspaceBriefing;
+  const captured = [];
+
+  try {
+
+    ConversationEngine.getWorkspaceBriefing = function(request) {
+      captured.push(request);
+      return { success: true, briefing: { recentContext: [] } };
+    };
+
+    const defaultResponse = doPost({
+      postData: {
+        contents: JSON.stringify({
+          token: DESK_API_TOKEN,
+          action: "getWorkspaceBriefing"
+        })
+      }
+    });
+
+    const response = doPost({
+      postData: {
+        contents: JSON.stringify({
+          token: DESK_API_TOKEN,
+          action: "getWorkspaceBriefing",
+          scope: "WORKSPACE",
+          workspace: "TP"
+        })
+      }
+    });
+    const data = JSON.parse(response.getContent());
+
+    assertWorkspaceBriefing(
+      JSON.parse(defaultResponse.getContent()).success === true &&
+      data.success === true,
+      "Routing API non riuscito."
+    );
+    assertWorkspaceBriefing(
+      captured.length === 2 &&
+      captured[0].scope === undefined &&
+      captured[0].workspaceId === undefined &&
+      captured[0].workspace === undefined &&
+      captured[1].scope === "WORKSPACE" &&
+      captured[1].workspace === "TP",
+      "L'API non inoltra scope e workspace al ConversationEngine."
+    );
+
+    return { success: true, requests: captured };
+
+  } finally {
+
+    ConversationEngine.getWorkspaceBriefing = originalBriefing;
+
+  }
 
 }
 

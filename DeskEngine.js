@@ -8,12 +8,14 @@
 const DeskEngine = {
 
   listProjects(workspace) {
+    const selectedWorkspace = WorkspaceService.resolveForAssignment(workspace);
     return ProjectRepository
-      .listByWorkspace(WorkspaceSettings.resolve(workspace))
+      .listByWorkspace(selectedWorkspace.id)
       .map(project => ({
         id: project.id,
         name: project.name,
-        workspace: project.workspace
+        workspaceId: project.workspaceId,
+        workspace: selectedWorkspace.name
       }));
   },
 
@@ -26,8 +28,8 @@ const DeskEngine = {
     }
 
     if (
-      WorkspaceSettings.normalize(project.workspace) !==
-      WorkspaceSettings.resolve(workspace)
+      WorkspaceSettings.normalize(project.workspaceId) !==
+      WorkspaceService.resolveForAssignment(workspace).id
     ) {
       throw new Error("Progetto non trovato nel workspace selezionato.");
     }
@@ -109,15 +111,13 @@ const DeskEngine = {
 
   },
 
-  getWorkspaceBriefing(workspace) {
+  getWorkspaceBriefing(request) {
 
     const now = new Date();
     const today = workspaceDateKey(now);
-    const selectedWorkspace = WorkspaceSettings.resolve(workspace);
     const allProjects = ProjectService.listAll();
-    const projects = allProjects.filter(project => (
-      WorkspaceSettings.normalize(project.workspace) === selectedWorkspace
-    ));
+    const selection = workspaceBriefingSelection(request, allProjects);
+    const projects = selection.projects;
     const openTasks = TaskService.listOpen();
     const timelineEvents = getTimelineEvents();
     const projectById = {};
@@ -209,7 +209,17 @@ const DeskEngine = {
 
     return {
       generatedAt: now.toISOString(),
-      workspace: selectedWorkspace,
+      scope: selection.scope,
+      workspace: selection.workspaces.length === 1
+        ? selection.workspaces[0].name
+        : "",
+      workspaceId: selection.workspaces.length === 1
+        ? selection.workspaces[0].id
+        : "",
+      workspaces: selection.workspaces.map(workspace => ({
+        id: workspace.id,
+        name: workspace.name
+      })),
       date: today,
       timezone: Session.getScriptTimeZone(),
       counts: {
@@ -490,10 +500,15 @@ function workspaceProjectContext(project, tasks, events) {
     ? lastEventAt
     : updatedAt;
 
+  const workspace = WorkspaceService.resolve(project.workspaceId, {
+    includeDisabled: true
+  });
+
   return {
     projectId: String(project.id),
     projectName: String(project.name || ""),
-    workspace: WorkspaceSettings.normalize(project.workspace),
+    workspaceId: WorkspaceSettings.normalize(project.workspaceId),
+    workspace: workspace ? workspace.name : "",
     status: project.status,
     focus: String(project.focus || ""),
     nextAction: String(project.nextAction || ""),
@@ -558,6 +573,60 @@ function workspaceProjectStatusOrder(status) {
   }
 
   return 5;
+}
+
+function workspaceBriefingSelection(request, allProjects) {
+  const options = typeof request === "string"
+    ? { scope: CONFIG.WORKSPACE_SCOPE.WORKSPACE, workspace: request }
+    : (request || {});
+  const scope = String(
+    options.scope || CONFIG.WORKSPACE_SCOPE.PRIMARY
+  ).trim().toUpperCase();
+  const supportedScopes = Object.keys(CONFIG.WORKSPACE_SCOPE).map(key => (
+    CONFIG.WORKSPACE_SCOPE[key]
+  ));
+
+  if (supportedScopes.indexOf(scope) === -1) {
+    throw new Error("Scope workspace non supportato: " + scope);
+  }
+
+  const activeWorkspaces = WorkspaceService.list();
+  const defaultWorkspace = WorkspaceService.getDefault();
+  let selectedWorkspaces;
+
+  if (scope === CONFIG.WORKSPACE_SCOPE.PRIMARY) {
+    if (!defaultWorkspace) {
+      throw new Error("Workspace predefinito non configurato.");
+    }
+    selectedWorkspaces = [defaultWorkspace];
+  } else if (scope === CONFIG.WORKSPACE_SCOPE.FREELANCE) {
+    selectedWorkspaces = activeWorkspaces.filter(workspace => (
+      !workspace.isDefault
+    ));
+  } else if (scope === CONFIG.WORKSPACE_SCOPE.ALL) {
+    selectedWorkspaces = activeWorkspaces;
+  } else {
+    const workspace = options.workspaceId
+      ? WorkspaceService.resolve(options.workspaceId)
+      : WorkspaceService.resolve(options.workspace);
+    if (!workspace) {
+      throw new Error("Workspace richiesto non trovato o disattivato.");
+    }
+    selectedWorkspaces = [workspace];
+  }
+
+  const selectedIds = {};
+  selectedWorkspaces.forEach(workspace => {
+    selectedIds[workspace.id] = true;
+  });
+
+  return {
+    scope: scope,
+    workspaces: selectedWorkspaces,
+    projects: (allProjects || []).filter(project => (
+      !!selectedIds[WorkspaceSettings.normalize(project.workspaceId)]
+    ))
+  };
 }
 
 function workspaceTaskDetail(task, project, today) {
