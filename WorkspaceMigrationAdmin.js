@@ -18,9 +18,21 @@ function workspaceMigrationShowFingerprint() {
 }
 
 function workspaceMigrationRunPreflight() {
-  return WorkspaceMigration.preflight(
+  const result = WorkspaceMigration.preflight(
     MigrationDataSource.forSpreadsheet(SpreadsheetApp.getActiveSpreadsheet())
   );
+
+  migrationAdminLogResult_("workspaceMigrationRunPreflight", result);
+  return result;
+}
+
+function migrationAdminLogResult_(operation, result) {
+  console.log(JSON.stringify({
+    operation: operation,
+    result: result
+  }, null, 2));
+
+  return result;
 }
 
 function workspaceMigrationBuildPlan() {
