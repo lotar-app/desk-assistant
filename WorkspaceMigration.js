@@ -97,12 +97,16 @@ const WorkspaceMigration = {
     const errors = [];
     const warnings = [];
     const legacyHeaders = PROJECT_HEADERS.slice(0, 8);
+    const approvedLegacyHeaders = legacyHeaders.slice();
+    approvedLegacyHeaders[2] = "Stato";
     const expectedIds = Object.keys(this.APPROVED_PROJECT_MAPPING).sort();
     const actualIds = projects.rows.map(row => String(row.values.ID || ""));
 
     this.require(errors, projects.exists === true, "PROJECTS_MISSING",
       "Il foglio Projects non esiste.");
-    this.require(errors, MigrationUtils.valuesEqual(projects.headers, legacyHeaders),
+    this.require(errors,
+      MigrationUtils.valuesEqual(projects.headers, legacyHeaders) ||
+      MigrationUtils.valuesEqual(projects.headers, approvedLegacyHeaders),
       "PROJECTS_SCHEMA_INCOMPATIBLE",
       "Projects deve avere esattamente gli otto header legacy approvati.");
     this.require(errors, actualIds.every(Boolean), "PROJECT_ID_EMPTY",
@@ -122,8 +126,10 @@ const WorkspaceMigration = {
     this.require(errors, timeline.exists === true &&
       MigrationUtils.valuesEqual(timeline.headers, TIMELINE_HEADERS),
       "TIMELINE_SCHEMA_INCOMPATIBLE", "Schema Timeline non compatibile.");
-    this.require(errors, settings.exists === true &&
-      MigrationUtils.valuesEqual(settings.headers, SETTINGS_HEADERS),
+    this.require(errors, settings.exists === true && (
+      MigrationUtils.valuesEqual(settings.headers, SETTINGS_HEADERS) ||
+      (settings.headers.length === 0 && settings.rows.length === 0)
+    ),
       "SETTINGS_SCHEMA_INCOMPATIBLE", "Schema Settings non compatibile.");
     const taskIds = tasks.rows.map(row => String(row.values.ID || ""));
     this.require(errors, taskIds.every(Boolean), "TASK_ID_EMPTY",

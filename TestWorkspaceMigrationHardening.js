@@ -106,6 +106,24 @@ function testWorkspaceMigrationHardening() {
   workspaceAssertRejected(workspaceMigrationFixtureRows({
     headers: ["ID", "Progetto", "BROKEN"]
   }), "PROJECTS_SCHEMA_INCOMPATIBLE", "Schema incompatibile accettato.");
+  const approvedLegacyRows = workspaceMigrationFixtureRows({
+    headers: [
+      "ID", "Progetto", "Stato", "Focus", "Responsabile",
+      "Prossima azione", "Creato il", "Ultimo aggiornamento"
+    ]
+  });
+  approvedLegacyRows.Settings = [];
+  const approvedLegacyResult = WorkspaceMigration.preflight(
+    MigrationDataSource.forSpreadsheet(
+      createMigrationTestSpreadsheet(approvedLegacyRows)
+    )
+  );
+  assertWorkspaceMigration(approvedLegacyResult.pass,
+    "Schema legacy approvato con Settings vuoto rifiutato.");
+  const invalidSettingsRows = workspaceMigrationFixtureRows({});
+  invalidSettingsRows.Settings = [["Key", "BROKEN"]];
+  workspaceAssertRejected(invalidSettingsRows,
+    "SETTINGS_SCHEMA_INCOMPATIBLE", "Schema Settings incompatibile accettato.");
   workspaceAssertRejected(workspaceMigrationFixtureRows({ removeLast: true }),
     "PROJECT_ID_SET_MISMATCH", "Project ID mancante accettato.");
   workspaceAssertRejected(workspaceMigrationFixtureRows({ extraId: "PRJ-EXTRA" }),
