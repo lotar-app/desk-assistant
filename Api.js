@@ -37,8 +37,6 @@ function doPost(e) {
     if (payload.action === "getWorkspaceBriefing") {
       return jsonResponse(
         ConversationEngine.getWorkspaceBriefing({
-          scope: payload.scope,
-          workspaceId: payload.workspaceId,
           workspace: payload.workspace
         })
       );

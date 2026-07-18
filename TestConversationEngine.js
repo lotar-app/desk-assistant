@@ -225,8 +225,7 @@ function testWorkspaceBriefingApiRouting() {
         contents: JSON.stringify({
           token: DESK_API_TOKEN,
           action: "getWorkspaceBriefing",
-          scope: "WORKSPACE",
-          workspace: "TP"
+          workspace: "TuscanPledges"
         })
       }
     });
@@ -239,12 +238,9 @@ function testWorkspaceBriefingApiRouting() {
     );
     assertWorkspaceBriefing(
       captured.length === 2 &&
-      captured[0].scope === undefined &&
-      captured[0].workspaceId === undefined &&
       captured[0].workspace === undefined &&
-      captured[1].scope === "WORKSPACE" &&
-      captured[1].workspace === "TP",
-      "L'API non inoltra scope e workspace al ConversationEngine."
+      captured[1].workspace === "TuscanPledges",
+      "L'API non inoltra il target al ConversationEngine."
     );
 
     return { success: true, requests: captured };

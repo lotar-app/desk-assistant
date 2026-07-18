@@ -4,7 +4,7 @@
 
 Questo documento definisce il modello Workspace approvato per Desk. Il modello
 sostituisce l'appartenenza basata sul nome con un riferimento stabile e prepara
-le viste `Desk`, `Desk freelance`, `Desk tutte` e `Desk <workspace>`.
+le viste `Desk` e `Desk <workspace|project>`.
 
 La migrazione dei dati e il deployment restano operazioni separate: il codice
 può essere predisposto e testato senza applicare assegnazioni al foglio reale.
@@ -17,7 +17,7 @@ può essere predisposto e testato senza applicare assegnazioni al foglio reale.
 - supportare workspace attivi, disattivati e privi di progetti;
 - spostare o unire workspace senza cambiare Project ID, task o Timeline;
 - rendere visibili dati mancanti, incoerenti od orfani;
-- conservare la compatibilità dei client che non inviano parametri.
+- risolvere in modo deterministico i comandi Desk v2.
 
 ## Modello dati
 
@@ -76,18 +76,15 @@ La migrazione assegna gli ID tramite mapping esplicito per Project ID.
 
 ## Risoluzione e livelli applicativi
 
-L'interfaccia può ricevere un nome o un alias. `WorkspaceService.resolve()` lo
-traduce in Workspace ID prima di invocare il briefing. `DeskEngine` opera su ID
-o su scope già validati e non dipende dai nomi visualizzati.
+Il briefing riceve un target testuale. Se il target è assente usa sempre
+`LOTAR`; altrimenti `DeskEngine` cerca prima una corrispondenza esatta e
+case-insensitive tra i workspace supportati (`LOTAR`, `CLIENTI`, `PERSONALE`)
+e soltanto dopo cerca un progetto per nome. Una collisione tra nome workspace e
+nome progetto viene quindi risolta a favore del workspace.
 
-Gli scope sono:
-
-- `PRIMARY`: solo il Workspace ID predefinito;
-- `FREELANCE`: tutti i workspace attivi diversi dal predefinito;
-- `ALL`: tutti i workspace attivi;
-- `WORKSPACE`: un singolo Workspace ID risolto da nome, alias o ID.
-
-L'assenza di scope mantiene il comportamento storico e significa `PRIMARY`.
+Il risultato espone lo scope `WORKSPACE` oppure `PROJECT`. ID e alias non sono
+input del comando conversazionale v2; restano disponibili alle operazioni
+amministrative e ai riferimenti interni del modello dati.
 
 ## Operazioni amministrative
 
@@ -163,15 +160,12 @@ La diagnostica amministrativa espone almeno:
 - alias verso workspace inesistenti;
 - task e Timeline con Project ID inesistente.
 
-## API e compatibilità
+## API
 
-`getWorkspaceBriefing` accetta facoltativamente `scope`, `workspaceId` e
-`workspace`. I client esistenti possono continuare a inviare soltanto
-`action: getWorkspaceBriefing`: il server applica `PRIMARY`.
-
-Per `WORKSPACE`, l'API privilegia `workspaceId`; `workspace` viene risolto da
-nome o alias prima di chiamare il motore. Le risposte includono gli ID e i nomi
-dei workspace selezionati.
+`getWorkspaceBriefing` accetta facoltativamente `workspace` come target
+testuale. In assenza del campo il server seleziona `LOTAR`; in sua presenza
+applica l'ordine Workspace → Project. Le risposte includono ID e nome del
+workspace associato e uno scope `WORKSPACE` o `PROJECT`.
 
 ## Trade-off
 
@@ -184,5 +178,5 @@ dei workspace selezionati.
   espliciti nelle viste operative;
 - richiedere `WorkspaceID` nel codice operativo evita fallback ambigui, ma
   impone la sequenza migrazione schema/dati prima del deployment applicativo;
-- `ALL` e `FREELANCE` aggregano più workspace in un unico briefing: ogni
-  contesto deve quindi includere Workspace ID e nome per evitare ambiguità.
+- la risoluzione Workspace → Project elimina gli scope aggregati e mantiene
+  ogni briefing confinato a un workspace o a un singolo progetto.

@@ -79,13 +79,13 @@ ProjectService + TaskService + TimelineService
 Google Sheets
 ```
 
-Quando l'utente scrive `Desk`, il GPT richiama automaticamente `getWorkspaceBriefing` senza parametri opzionali e Apps Script seleziona il workspace predefinito. `Desk freelance` usa lo scope `FREELANCE`, `Desk tutte` usa `ALL` e `Desk <workspace>` risolve nome o alias prima di usare il relativo Workspace ID. L'Action invia la richiesta al percorso del Worker; il Worker aggiunge le credenziali, inoltra la richiesta ad Apps Script e restituisce al GPT esclusivamente il payload reale dell'API. Apps Script legge e aggrega i dati senza eseguire operazioni di scrittura. L'autenticazione è gestita esclusivamente dal Worker e non viene esposta al GPT o allo schema OpenAPI.
+Quando l'utente scrive `Desk`, il GPT richiama automaticamente `getWorkspaceBriefing` senza parametri opzionali e Apps Script seleziona `LOTAR`. Per `Desk <parametro>`, Apps Script confronta prima il parametro con i workspace supportati (`LOTAR`, `CLIENTI`, `PERSONALE`) e, se non trova corrispondenza, lo interpreta come nome progetto. L'Action invia la richiesta al percorso del Worker; il Worker aggiunge le credenziali, inoltra la richiesta ad Apps Script e restituisce al GPT esclusivamente il payload reale dell'API. Apps Script legge e aggrega i dati senza eseguire operazioni di scrittura. L'autenticazione è gestita esclusivamente dal Worker e non viene esposta al GPT o allo schema OpenAPI.
 
 Le tre Action hanno responsabilità distinte:
 
 - `updateDesk` applica un aggiornamento conversazionale a un progetto e può modificare progetto, attività e Timeline;
 - `getProject` legge un singolo progetto identificato per nome;
-- `getWorkspaceBriefing` legge e aggrega l'intero contesto operativo del workspace, senza modificare alcun dato.
+- `getWorkspaceBriefing` legge e aggrega il contesto operativo di un workspace o di un singolo progetto, senza modificare alcun dato.
 
 ## Componenti
 

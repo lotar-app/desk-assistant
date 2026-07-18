@@ -16,6 +16,16 @@ const WorkspaceService = {
     return defaults.length === 1 ? defaults[0] : null;
   },
 
+  resolveByName(value) {
+    const lookup = workspaceLookupKey(value);
+    if (!lookup) {
+      return null;
+    }
+    return this.list().find(workspace => (
+      workspaceLookupKey(workspace.name) === lookup
+    )) || null;
+  },
+
   resolve(value, options) {
     const lookup = workspaceLookupKey(value);
     if (!lookup) {

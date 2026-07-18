@@ -576,57 +576,58 @@ function workspaceProjectStatusOrder(status) {
 }
 
 function workspaceBriefingSelection(request, allProjects) {
-  const options = typeof request === "string"
-    ? { scope: CONFIG.WORKSPACE_SCOPE.WORKSPACE, workspace: request }
-    : (request || {});
-  const scope = String(
-    options.scope || CONFIG.WORKSPACE_SCOPE.PRIMARY
-  ).trim().toUpperCase();
-  const supportedScopes = Object.keys(CONFIG.WORKSPACE_SCOPE).map(key => (
-    CONFIG.WORKSPACE_SCOPE[key]
+  const target = workspaceBriefingTarget(request) ||
+    CONFIG.DESK_V2.DEFAULT_WORKSPACE;
+  const supportedWorkspaceNames = CONFIG.DESK_V2.WORKSPACES.map(
+    WorkspaceSettings.normalize
+  );
+  const workspaceName = WorkspaceSettings.normalize(target);
+
+  if (supportedWorkspaceNames.indexOf(workspaceName) !== -1) {
+    const workspace = WorkspaceService.resolveByName(target);
+    if (!workspace) {
+      throw new Error("Workspace supportato non configurato: " + target);
+    }
+    return {
+      scope: CONFIG.WORKSPACE_SCOPE.WORKSPACE,
+      workspaces: [workspace],
+      projects: (allProjects || []).filter(project => (
+        WorkspaceSettings.normalize(project.workspaceId) === workspace.id
+      ))
+    };
+  }
+
+  const projectKey = workspaceLookupKey(target);
+  const project = (allProjects || []).find(item => (
+    workspaceLookupKey(item.name) === projectKey
   ));
 
-  if (supportedScopes.indexOf(scope) === -1) {
-    throw new Error("Scope workspace non supportato: " + scope);
+  if (!project) {
+    throw new Error("Workspace o progetto non trovato: " + target);
   }
 
-  const activeWorkspaces = WorkspaceService.list();
-  const defaultWorkspace = WorkspaceService.getDefault();
-  let selectedWorkspaces;
-
-  if (scope === CONFIG.WORKSPACE_SCOPE.PRIMARY) {
-    if (!defaultWorkspace) {
-      throw new Error("Workspace predefinito non configurato.");
-    }
-    selectedWorkspaces = [defaultWorkspace];
-  } else if (scope === CONFIG.WORKSPACE_SCOPE.FREELANCE) {
-    selectedWorkspaces = activeWorkspaces.filter(workspace => (
-      !workspace.isDefault
-    ));
-  } else if (scope === CONFIG.WORKSPACE_SCOPE.ALL) {
-    selectedWorkspaces = activeWorkspaces;
-  } else {
-    const workspace = options.workspaceId
-      ? WorkspaceService.resolve(options.workspaceId)
-      : WorkspaceService.resolve(options.workspace);
-    if (!workspace) {
-      throw new Error("Workspace richiesto non trovato o disattivato.");
-    }
-    selectedWorkspaces = [workspace];
-  }
-
-  const selectedIds = {};
-  selectedWorkspaces.forEach(workspace => {
-    selectedIds[workspace.id] = true;
+  const projectWorkspace = WorkspaceService.resolve(project.workspaceId, {
+    includeDisabled: true
   });
+  if (!projectWorkspace) {
+    throw new Error("Workspace del progetto non configurato: " + project.name);
+  }
 
   return {
-    scope: scope,
-    workspaces: selectedWorkspaces,
-    projects: (allProjects || []).filter(project => (
-      !!selectedIds[WorkspaceSettings.normalize(project.workspaceId)]
-    ))
+    scope: CONFIG.WORKSPACE_SCOPE.PROJECT,
+    workspaces: [projectWorkspace],
+    projects: [project]
   };
+}
+
+function workspaceBriefingTarget(request) {
+  if (typeof request === "string") {
+    return request.trim();
+  }
+  if (!request || typeof request !== "object") {
+    return "";
+  }
+  return String(request.workspace || "").trim();
 }
 
 function workspaceTaskDetail(task, project, today) {

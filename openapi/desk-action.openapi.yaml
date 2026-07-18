@@ -131,11 +131,12 @@ paths:
   /workspace-briefing:
     post:
       operationId: getWorkspaceBriefing
-      summary: Read the current Desk workspace briefing
+      summary: Read a Desk workspace or project briefing
       description: >
         Returns a read-only operational briefing built from projects, open tasks,
-        and timeline events. It provides factual signals and candidate starting
-        points without deciding the user's priorities or modifying Desk.
+        and timeline events. With no target it selects LOTAR. A supplied target
+        is resolved first as a supported workspace name and then as a project
+        name.
       requestBody:
         required: true
         content:
@@ -149,24 +150,12 @@ paths:
                 action:
                   type: string
                   const: getWorkspaceBriefing
-                scope:
-                  type: string
-                  enum:
-                    - PRIMARY
-                    - FREELANCE
-                    - ALL
-                    - WORKSPACE
-                  default: PRIMARY
-                  description: Optional briefing selection. Omission selects the default workspace.
-                workspaceId:
-                  type: string
-                  description: Stable Workspace ID, used with WORKSPACE scope when already known.
                 workspace:
                   type: string
-                  description: Human-readable workspace name or alias, resolved before briefing execution.
+                  description: Optional workspace or project name. Omission selects LOTAR.
       responses:
         "200":
-          description: Current read-only Desk workspace briefing
+          description: Current read-only Desk workspace or project briefing
           content:
             application/json:
               schema:
