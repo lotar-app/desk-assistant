@@ -246,6 +246,13 @@ La versione `0.1.0` in `package.json` identifica attualmente il pacchetto Node l
 
 ## Procedura di rilascio
 
+Per la Workspace Foundation, la sequenza amministrativa è:
+
+1. completare Task ID Repair, se necessaria;
+2. eseguire `LEGACY_WORKSPACE_NORMALIZATION_V1`;
+3. rieseguire il preflight Workspace Foundation;
+4. eseguire `WORKSPACE_FOUNDATION_V1` soltanto dopo un preflight positivo.
+
 1. Verificare che le modifiche rispettino la separazione UI → Engine/Service → Repository → Google Sheets.
 2. Controllare che configurazione, schema dati e Timeline siano coerenti e che nessun segreto reale sia incluso nel repository.
 3. Eseguire i controlli sintattici e i test manuali pertinenti, inclusi `TestConversationEngine.js` o il client CLI quando il rilascio coinvolge l'API.
