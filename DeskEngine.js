@@ -311,7 +311,12 @@ const DeskEngine = {
     MemoryUpdate.validate(memoryUpdate);
 
     const projectId = memoryUpdate.projectId;
-    const project = this.getProject(projectId);
+    const project = ProjectService.get(projectId);
+
+    if (!project) {
+      throw new Error("Progetto non trovato.");
+    }
+
     const createdTasks = [];
     const updatedTasks = [];
 
