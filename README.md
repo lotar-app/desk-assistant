@@ -85,6 +85,10 @@ La Fase 3B definisce il comportamento di recupero e consolidamento automatico
 del Desk Assistant, senza attivare il runtime reale. Policy e limiti sono in
 [`PROJECT_ACTIVITY_PHASE3B.md`](PROJECT_ACTIVITY_PHASE3B.md).
 
+Il piano di attivazione controllata, attualmente in stato `NO-GO` fino alla
+chiusura dei prerequisiti di hardening, è in
+[`PROJECT_ACTIVITY_PHASE4_ACTIVATION_RUNBOOK.md`](PROJECT_ACTIVITY_PHASE4_ACTIVATION_RUNBOOK.md).
+
 L'architettura segue la pipeline completa dell'assistente:
 
 ```text
