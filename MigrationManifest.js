@@ -42,6 +42,12 @@ const MigrationManifest = {
     this.validate(manifest);
     const prepared = MigrationUtils.clone(manifest);
     prepared.checksum = MigrationUtils.checksum(prepared);
+    prepared.signature = MigrationUtils.checksum({
+      migrationId: prepared.migrationId,
+      version: prepared.version,
+      mode: prepared.mode,
+      checksum: prepared.checksum
+    });
     return prepared;
   }
 

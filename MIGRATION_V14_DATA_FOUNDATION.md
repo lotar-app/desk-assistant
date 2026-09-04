@@ -293,3 +293,48 @@ lock ed export simulati. Copre:
 - rifiuto del manifesto reale;
 - rifiuto di conferme incomplete;
 - rilevamento della manomissione del log.
+
+## Milestone 2B - Preflight finale
+
+Il manifesto finale passa allo stato `EXECUTION_READY`, che certifica il
+superamento del preflight ma continua a essere rifiutato da
+`MigrationSafetyGuard`: soltanto `EXECUTION_APPROVED` consente al writer di
+procedere.
+
+### Project ID scanner
+
+Il manifesto non contiene piu' un ID permanente scritto manualmente. La data
+storica del primo evento scanner viene passata a `ProjectService.generateId()`,
+lo stesso generatore usato da `ProjectService.create()`. Il valore materializzato
+dal dominio e':
+
+```text
+PRJ-20260713121014
+```
+
+Il preflight verifica che selettore di creazione, record finale, task ed eventi
+spostati usino tutti lo stesso ID derivato e che l'ID non esista nella baseline.
+
+### Timestamp nativi
+
+Il manifesto conserva come `Date`:
+
+- `Creato il` e `Ultimo aggiornamento` del progetto scanner;
+- `UpdatedAt` e `CompletedAt` delle due task v1.3 completate.
+
+`MigrationUtils.clone()` preserva i Date, mentre checksum e firma li
+normalizzano in ISO 8601 soltanto durante la serializzazione canonica.
+
+### Firma e validazione
+
+`MigrationManifest.prepare()` produce due valori distinti:
+
+- checksum dell'intero manifesto;
+- firma del relativo envelope con migration ID, versione, modalità e checksum.
+
+`MigrationPreflightValidator` simula tutte le operazioni e verifica modalità,
+dry run, checksum, firma, baseline, ID derivato, Date nativi, reversibilità,
+conteggi finali, duplicati e riferimenti orfani.
+
+Lo stato `EXECUTION_READY` non crea backup, MigrationLog o altri dati e non
+invoca writer o rollback.

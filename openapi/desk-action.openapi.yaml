@@ -9,6 +9,7 @@ paths:
   /:
     post:
       operationId: updateDesk
+      x-openai-isConsequential: false
       summary: Update Desk from a conversation
       description: >
         Sends a structured project update to Desk when the conversation contains
@@ -92,6 +93,7 @@ paths:
   /getProject:
     post:
       operationId: getProject
+      x-openai-isConsequential: false
       summary: Read a Desk project
       description: Returns the project whose human-readable name matches the request.
       requestBody:
@@ -128,9 +130,115 @@ paths:
                     type: object
                     additionalProperties: true
                     description: Result returned by Desk.
+  /project-tasks:
+    post:
+      operationId: getProjectTasks
+      x-openai-isConsequential: false
+      summary: Read all tasks for a Desk project
+      description: Returns the complete task list for the project whose name matches the request.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - projectName
+              additionalProperties: false
+              properties:
+                projectName:
+                  type: string
+                  description: Human-readable name of the project whose tasks should be retrieved.
+      responses:
+        "200":
+          description: Project task lookup response
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                  - httpStatus
+                  - result
+                additionalProperties: false
+                properties:
+                  success:
+                    type: boolean
+                  httpStatus:
+                    type: integer
+                  result:
+                    oneOf:
+                      - type: object
+                        additionalProperties: false
+                        required:
+                          - success
+                          - projectId
+                          - projectName
+                          - tasks
+                        properties:
+                          success:
+                            type: boolean
+                            const: true
+                          projectId:
+                            type: string
+                          projectName:
+                            type: string
+                          tasks:
+                            type: array
+                            items:
+                              type: object
+                              additionalProperties: false
+                              required:
+                                - id
+                                - projectId
+                                - title
+                                - description
+                                - status
+                                - priority
+                                - assignee
+                                - dueDate
+                                - createdAt
+                                - updatedAt
+                                - completedAt
+                              properties:
+                                id:
+                                  type: string
+                                projectId:
+                                  type: string
+                                title:
+                                  type: string
+                                description:
+                                  type: string
+                                status:
+                                  type: string
+                                priority:
+                                  type: string
+                                assignee:
+                                  type: string
+                                dueDate:
+                                  type: string
+                                createdAt:
+                                  type: string
+                                updatedAt:
+                                  type: string
+                                completedAt:
+                                  type: string
+                      - type: object
+                        additionalProperties: false
+                        required:
+                          - success
+                          - error
+                        properties:
+                          success:
+                            type: boolean
+                            const: false
+                          error:
+                            type: string
+                            const: PROJECT_NOT_FOUND
   /workspace-briefing:
     post:
       operationId: getWorkspaceBriefing
+      x-openai-isConsequential: false
       summary: Read a Desk workspace or project briefing
       description: >
         Returns a read-only operational briefing built from projects, open tasks,

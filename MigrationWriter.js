@@ -12,6 +12,40 @@ const MigrationWriter = {
   },
 
   apply(spreadsheet, operation) {
+    if (operation.action === "CREATE_SHEET") {
+      if (spreadsheet.getSheetByName(operation.sheet)) {
+        throw new Error(operation.operationId + ": il foglio esiste già.");
+      }
+      const headers = (operation.after && operation.after.headers) || [];
+      if (!headers.length) {
+        throw new Error(operation.operationId + ": header foglio mancanti.");
+      }
+      const createdSheet = spreadsheet.insertSheet(operation.sheet);
+      createdSheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+      return { before: null, after: { headers: headers } };
+    }
+
+    if (operation.action === "ADD_COLUMN") {
+      const sheet = spreadsheet.getSheetByName(operation.sheet);
+      const after = operation.after || {};
+      if (!sheet || !after.header || !after.position) {
+        throw new Error(operation.operationId + ": colonna non configurata.");
+      }
+      const headers = this.headers(sheet);
+      if (headers.indexOf(after.header) !== -1) {
+        throw new Error(operation.operationId + ": header già presente.");
+      }
+      if (Number(after.position) !== headers.length + 1) {
+        throw new Error(operation.operationId + ": posizione colonna non sicura.");
+      }
+      sheet.insertColumnAfter(headers.length);
+      sheet.getRange(1, after.position, 1, 1).setValues([[after.header]]);
+      return {
+        before: { headers: headers },
+        after: { header: after.header, position: Number(after.position) }
+      };
+    }
+
     const context = this.sheetContext(spreadsheet, operation.sheet);
 
     if (operation.action === "CREATE") {
@@ -78,6 +112,47 @@ const MigrationWriter = {
   },
 
   applyRollback(spreadsheet, operation) {
+    if (operation.action === "DELETE_SHEET") {
+      const sheet = spreadsheet.getSheetByName(operation.sheet);
+      const expected = MigrationRecordCodec.decode(operation.expectedCurrent);
+      if (!sheet || !expected || !MigrationUtils.valuesEqual(
+        this.headers(sheet), expected.headers || []
+      ) || sheet.getLastRow() !== 1) {
+        throw new Error(
+          operation.rollbackOperationId +
+            ": foglio divergente; rollback strutturale rifiutato."
+        );
+      }
+      spreadsheet.deleteSheet(sheet);
+      return { before: expected, after: null };
+    }
+
+    if (operation.action === "DELETE_COLUMN") {
+      const sheet = spreadsheet.getSheetByName(operation.sheet);
+      const expected = MigrationRecordCodec.decode(operation.expectedCurrent);
+      const restore = MigrationRecordCodec.decode(operation.restore);
+      if (!sheet || !expected || !restore) {
+        throw new Error(operation.rollbackOperationId + ": colonna non verificabile.");
+      }
+      const position = Number(expected.position);
+      const header = sheet.getRange(1, position, 1, 1).getValues()[0][0];
+      const values = sheet.getLastRow() > 1
+        ? sheet.getRange(2, position, sheet.getLastRow() - 1, 1).getValues()
+        : [];
+      if (String(header) !== String(expected.header) ||
+          values.some(row => String(row[0] || "") !== "")) {
+        throw new Error(
+          operation.rollbackOperationId +
+            ": colonna divergente; rollback strutturale rifiutato."
+        );
+      }
+      sheet.deleteColumn(position);
+      if (!MigrationUtils.valuesEqual(this.headers(sheet), restore.headers)) {
+        throw new Error(operation.rollbackOperationId + ": header non ripristinati.");
+      }
+      return { before: expected, after: restore };
+    }
+
     const context = this.sheetContext(spreadsheet, operation.sheet);
     const restore = MigrationRecordCodec.decode(operation.restore);
     const expectedCurrent = MigrationRecordCodec.decode(
@@ -153,6 +228,14 @@ const MigrationWriter = {
       sheet: sheet,
       headers: headers
     };
+  },
+
+  headers(sheet) {
+    if (!sheet || sheet.getLastRow() === 0 || sheet.getLastColumn() === 0) {
+      return [];
+    }
+    return sheet.getRange(1, 1, 1, sheet.getLastColumn())
+      .getValues()[0].map(value => String(value || ""));
   },
 
   findMatches(context, selector) {

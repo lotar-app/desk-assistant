@@ -253,6 +253,209 @@ function testWorkspaceBriefingApiRouting() {
 
 }
 
+function testProjectTasksAction() {
+
+  const originalFindByName = ProjectService.findByName;
+  const originalListByProject = TaskService.listByProject;
+  const createdAt = new Date("2026-07-20T08:00:00.000Z");
+  let capturedProjectId = "";
+
+  try {
+
+    ProjectService.findByName = function(name) {
+      return name === "Scanner"
+        ? { id: "PRJ-SCANNER", name: "Scanner" }
+        : null;
+    };
+
+    TaskService.listByProject = function(projectId) {
+      capturedProjectId = projectId;
+      return [{
+        id: "TSK-SCANNER",
+        projectId: projectId,
+        title: "Verificare la scansione",
+        description: "",
+        status: CONFIG.TASK_STATUS.OPEN,
+        priority: CONFIG.TASK_PRIORITY.NORMAL,
+        assignee: CONFIG.DEFAULT_OWNER,
+        dueDate: "",
+        createdAt: createdAt,
+        updatedAt: createdAt,
+        completedAt: ""
+      }];
+    };
+
+    const response = ConversationEngine.getProjectTasks(" Scanner ");
+
+    assertConversationEngine(response.success === true, "Risposta task non riuscita.");
+    assertConversationEngine(
+      capturedProjectId === "PRJ-SCANNER",
+      "La lettura task non usa il progetto risolto."
+    );
+    assertConversationEngine(
+      response.tasks.length === 1 &&
+      response.tasks[0].createdAt === createdAt.toISOString(),
+      "La risposta task non è serializzata."
+    );
+
+    const apiResponse = doPost({
+      postData: {
+        contents: JSON.stringify({
+          token: DESK_API_TOKEN,
+          action: "getProjectTasks",
+          projectName: "Scanner"
+        })
+      }
+    });
+    const apiData = JSON.parse(apiResponse.getContent());
+
+    assertConversationEngine(apiData.success === true, "Routing API task non riuscito.");
+    assertConversationEngine(
+      Array.isArray(apiData.tasks) && apiData.tasks.length === 1,
+      "Array task API mancante."
+    );
+
+    return apiData;
+
+  } finally {
+
+    ProjectService.findByName = originalFindByName;
+    TaskService.listByProject = originalListByProject;
+
+  }
+
+}
+
+function testPreparedUpdateUsesGlobalProjectIdLookup() {
+
+  const originalProjectGet = ProjectService.get;
+  const originalProjectUpdate = ProjectService.update;
+  const originalResolveForAssignment = WorkspaceService.resolveForAssignment;
+  const project = {
+    id: "PRJ-CLIENTI",
+    name: "Tuscanpledges",
+    status: CONFIG.PROJECT_STATUS.IN_PROGRESS,
+    focus: "Focus precedente",
+    nextAction: "Azione precedente",
+    workspaceId: "WS0002"
+  };
+  let updatedProjectId = "";
+  let defaultWorkspaceLookups = 0;
+
+  try {
+
+    ProjectService.get = function(projectId) {
+      return projectId === project.id ? project : null;
+    };
+
+    ProjectService.update = function(projectId) {
+      updatedProjectId = projectId;
+      return project;
+    };
+
+    WorkspaceService.resolveForAssignment = function() {
+      defaultWorkspaceLookups++;
+      throw new Error("Il workspace predefinito non deve essere risolto.");
+    };
+
+    const result = DeskEngine.applyPreparedUpdate({
+      valid: true,
+      update: {
+        projectId: project.id,
+        summary: "Aggiornamento progetto CLIENTI.",
+        focus: null,
+        nextAction: null,
+        status: null,
+        newTasks: [],
+        completedTasks: [],
+        timelineEvent: null,
+        confidence: 1,
+        needsConfirmation: false
+      }
+    });
+
+    assertConversationEngine(
+      result.success === true && result.projectId === project.id,
+      "L'update del progetto non predefinito non riesce."
+    );
+    assertConversationEngine(
+      updatedProjectId === project.id,
+      "L'update non usa il Project ID risolto."
+    );
+    assertConversationEngine(
+      defaultWorkspaceLookups === 0,
+      "L'applicazione consulta ancora il workspace predefinito."
+    );
+
+    return result;
+
+  } finally {
+
+    ProjectService.get = originalProjectGet;
+    ProjectService.update = originalProjectUpdate;
+    WorkspaceService.resolveForAssignment = originalResolveForAssignment;
+
+  }
+
+}
+
+function testPreparedUpdateRejectsMissingGlobalProjectId() {
+
+  const originalProjectGet = ProjectService.get;
+  const originalProjectUpdate = ProjectService.update;
+  let updateCalls = 0;
+  let errorMessage = "";
+
+  try {
+
+    ProjectService.get = function() {
+      return null;
+    };
+
+    ProjectService.update = function() {
+      updateCalls++;
+    };
+
+    try {
+      DeskEngine.applyPreparedUpdate({
+        valid: true,
+        update: {
+          projectId: "PRJ-MISSING",
+          summary: "Aggiornamento progetto inesistente.",
+          focus: null,
+          nextAction: null,
+          status: null,
+          newTasks: [],
+          completedTasks: [],
+          timelineEvent: null,
+          confidence: 1,
+          needsConfirmation: false
+        }
+      });
+    } catch (error) {
+      errorMessage = error.message;
+    }
+
+    assertConversationEngine(
+      errorMessage === "Progetto non trovato.",
+      "Il Project ID inesistente non produce l'errore esplicito atteso."
+    );
+    assertConversationEngine(
+      updateCalls === 0,
+      "Un progetto inesistente raggiunge il livello di aggiornamento."
+    );
+
+    return { success: true, error: errorMessage };
+
+  } finally {
+
+    ProjectService.get = originalProjectGet;
+    ProjectService.update = originalProjectUpdate;
+
+  }
+
+}
+
 function assertWorkspaceBriefing(condition, message) {
 
   if (!condition) {

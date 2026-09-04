@@ -1,6 +1,9 @@
 function createV14DataFoundationManifest() {
 
   const operations = [];
+  const scannerCreatedAt = new Date("2026-07-13T12:10:14.443+02:00");
+  const scannerUpdatedAt = new Date("2026-07-13T12:10:16.476+02:00");
+  const scannerProjectId = ProjectService.generateId(scannerCreatedAt);
 
   function add(operationId, action, sheet, selector, after, reason) {
     operations.push({
@@ -93,14 +96,16 @@ function createV14DataFoundationManifest() {
     "V14-CREATE-SCANNER-PROJECT",
     "CREATE",
     "Projects",
-    { ID: "PRJ-20260714-SCANNER-001" },
+    { ID: scannerProjectId },
     {
-      ID: "PRJ-20260714-SCANNER-001",
+      ID: scannerProjectId,
       Progetto: "Configurazione scanner di rete",
       Stato: "WAITING",
       Focus: "Analizzare il blocco dello scanner di rete sul PC di Serena e verificare l'interazione con il firewall ESET Protect.",
       Responsabile: "Max",
-      "Prossima azione": "Effettuare verifiche dirette sul PC di Serena per completare la diagnosi."
+      "Prossima azione": "Effettuare verifiche dirette sul PC di Serena per completare la diagnosi.",
+      "Creato il": scannerCreatedAt,
+      "Ultimo aggiornamento": scannerUpdatedAt
     },
     "Creazione del progetto scanner separato da Desk Assistant."
   );
@@ -110,7 +115,7 @@ function createV14DataFoundationManifest() {
     "MOVE",
     "Tasks",
     { ID: "TSK-20260713121015", ProjectID: "PRJ-20260710095800" },
-    { ProjectID: "PRJ-20260714-SCANNER-001" },
+    { ProjectID: scannerProjectId },
     "Spostamento della task scanner al progetto corretto."
   );
 
@@ -128,21 +133,31 @@ function createV14DataFoundationManifest() {
         Tipo: event[0],
         Descrizione: event[1]
       },
-      { "Project ID": "PRJ-20260714-SCANNER-001" },
+      { "Project ID": scannerProjectId },
       "Spostamento dell'evento scanner al progetto corretto."
     );
   });
 
   [
-    "TSK-20260710095805",
-    "TSK-20260710102209"
-  ].forEach((taskId, index) => {
+    {
+      taskId: "TSK-20260710095805",
+      completedAt: new Date("2026-07-10T09:58:06.149+02:00")
+    },
+    {
+      taskId: "TSK-20260710102209",
+      completedAt: new Date("2026-07-10T10:22:10.389+02:00")
+    }
+  ].forEach((task, index) => {
     add(
       "V14-COMPLETE-RELEASE-TASK-" + (index + 1),
       "COMPLETE",
       "Tasks",
-      { ID: taskId, Status: "Aperta" },
-      { Status: "Completata" },
+      { ID: task.taskId, Status: "Aperta" },
+      {
+        Status: "Completata",
+        UpdatedAt: task.completedAt,
+        CompletedAt: task.completedAt
+      },
       "Completamento di una verifica conclusa entro la release v1.3."
     );
   });
@@ -222,9 +237,15 @@ function createV14DataFoundationManifest() {
 
   return {
     migrationId: "V14_DATA_FOUNDATION",
-    version: "1.4.0-milestone.1",
-    description: "Baseline e piano approvato per la bonifica Desk v1.4.",
-    mode: "DRY_RUN_ONLY",
+    version: "1.4.0-milestone.2b",
+    description: "Manifesto finale preflight per la bonifica Desk v1.4.",
+    mode: "EXECUTION_READY",
+    expectedFinalCounts: {
+      Projects: 5,
+      Tasks: 8,
+      Timeline: 26,
+      Settings: 0
+    },
     baseline: {
       source: "audit/Desk-export-2026-07-14.xlsx",
       sheets: {

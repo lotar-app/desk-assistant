@@ -1,6 +1,8 @@
 const MigrationExecutor = {
 
   execute(manifest, backup, dryRun, physicalBackup, confirmation, dependencies) {
+    const startedAt = new Date();
+    const applied = [];
     MigrationSafetyGuard.assertExecution(
       manifest,
       backup,
@@ -51,8 +53,6 @@ const MigrationExecutor = {
       }
 
       let sequence = 1;
-      const applied = [];
-
       manifest.operations.forEach(operation => {
         dependencies.logRepository.append({
           migrationId: manifest.migrationId,
@@ -131,8 +131,42 @@ const MigrationExecutor = {
         success: true,
         migrationId: manifest.migrationId,
         appliedOperations: applied,
-        physicalBackupId: physicalBackup.spreadsheetCopyId
+        physicalBackupId: physicalBackup.spreadsheetCopyId,
+        structuralChanges: manifest.operations.filter(operation => (
+          operation.action === "ADD_COLUMN" || operation.action === "CREATE_SHEET"
+        )).map(operation => operation.operationId),
+        workspacesCreated: manifest.operations.filter(operation => (
+          operation.action === "CREATE" &&
+          operation.sheet === CONFIG.SHEETS.WORKSPACES
+        )).length,
+        aliasesCreated: manifest.operations.filter(operation => (
+          operation.action === "CREATE" &&
+          operation.sheet === CONFIG.SHEETS.WORKSPACE_ALIASES
+        )).length,
+        projectsUpdated: manifest.operations.filter(operation => (
+          operation.action === "UPDATE" &&
+          operation.sheet === CONFIG.SHEETS.PROJECTS
+        )).length,
+        warnings: [],
+        errors: [],
+        durationMs: new Date().getTime() - startedAt.getTime(),
+        outcome: "SUCCESS"
       };
+    } catch (error) {
+      error.migrationReport = {
+        success: false,
+        migrationId: manifest.migrationId,
+        appliedOperations: applied.slice(),
+        structuralChanges: manifest.operations.filter(operation => (
+          applied.indexOf(operation.operationId) !== -1 &&
+          (operation.action === "ADD_COLUMN" || operation.action === "CREATE_SHEET")
+        )).map(operation => operation.operationId),
+        warnings: [],
+        errors: [error.message],
+        durationMs: new Date().getTime() - startedAt.getTime(),
+        outcome: "FAILED"
+      };
+      throw error;
     } finally {
       lock.releaseLock();
     }

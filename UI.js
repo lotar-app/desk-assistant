@@ -87,19 +87,7 @@ function serializeDate(value) {
 
 function serializeTask(task) {
 
-  return {
-    id: task.id,
-    projectId: task.projectId,
-    title: task.title,
-    description: task.description,
-    status: task.status,
-    priority: task.priority,
-    assignee: task.assignee,
-    dueDate: serializeDate(task.dueDate),
-    createdAt: serializeDate(task.createdAt),
-    updatedAt: serializeDate(task.updatedAt),
-    completedAt: serializeDate(task.completedAt)
-  };
+  return serializeTaskRecord(task);
 
 }
 

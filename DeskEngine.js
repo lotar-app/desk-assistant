@@ -56,13 +56,17 @@ const DeskEngine = {
 
   },
 
-  listProjectTasks(projectId) {
+  listProjectTasks(projectId, options) {
 
     if (!projectId) {
       throw new Error("Progetto non valido.");
     }
 
-    return TaskService.listByProject(projectId);
+    const tasks = TaskService.listByProject(projectId);
+
+    return options && options.serialize === true
+      ? tasks.map(serializeTaskRecord)
+      : tasks;
 
   },
 
@@ -311,7 +315,12 @@ const DeskEngine = {
     MemoryUpdate.validate(memoryUpdate);
 
     const projectId = memoryUpdate.projectId;
-    const project = this.getProject(projectId);
+    const project = ProjectService.get(projectId);
+
+    if (!project) {
+      throw new Error("Progetto non trovato.");
+    }
+
     const createdTasks = [];
     const updatedTasks = [];
 
@@ -490,6 +499,38 @@ const DeskEngine = {
   }
 
 };
+
+function serializeTaskRecord(task) {
+
+  return {
+    id: String(task.id || ""),
+    projectId: String(task.projectId || ""),
+    title: String(task.title || ""),
+    description: String(task.description || ""),
+    status: String(task.status || ""),
+    priority: String(task.priority || ""),
+    assignee: String(task.assignee || ""),
+    dueDate: serializeTaskDate(task.dueDate),
+    createdAt: serializeTaskDate(task.createdAt),
+    updatedAt: serializeTaskDate(task.updatedAt),
+    completedAt: serializeTaskDate(task.completedAt)
+  };
+
+}
+
+function serializeTaskDate(value) {
+
+  if (!value) {
+    return "";
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  return String(value);
+
+}
 
 function workspaceProjectContext(project, tasks, events) {
 

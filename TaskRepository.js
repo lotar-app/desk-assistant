@@ -18,6 +18,17 @@ const TaskRepository = {
     this.sheet().appendRow(data);
   },
 
+  idExists(id) {
+    const normalizedId = String(id || "").trim();
+    if (!normalizedId) return false;
+    const sheet = this.sheet();
+    if (sheet.getLastRow() < 2) return false;
+    return sheet
+      .getRange(2, CONFIG.TASK_COLUMNS.ID, sheet.getLastRow() - 1, 1)
+      .getValues()
+      .some(row => String(row[0] || "").trim() === normalizedId);
+  },
+
   update(id, data) {
 
     const sheet = this.sheet();

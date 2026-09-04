@@ -15,8 +15,9 @@ const DryRunEngine = {
       };
     }
 
+    const virtualBackup = MigrationUtils.clone(backup);
     const operations = preparedManifest.operations.map(operation => (
-      this.inspectOperation(operation, backup, log)
+      this.inspectOperation(operation, virtualBackup, log)
     ));
     const success = operations.every(operation => operation.valid);
 
@@ -24,6 +25,7 @@ const DryRunEngine = {
       success: success,
       dryRun: true,
       manifestChecksum: preparedManifest.checksum,
+      manifestSignature: preparedManifest.signature,
       backupChecksum: backup.checksum,
       baseline: baseline,
       operations: operations,
@@ -38,6 +40,39 @@ const DryRunEngine = {
 
   inspectOperation(operation, backup, log) {
     const sheet = backup.sheets[operation.sheet];
+    if (operation.action === "CREATE_SHEET") {
+      const headers = operation.after && operation.after.headers;
+      const valid = (!sheet || sheet.exists === false) &&
+        Array.isArray(headers) && headers.length > 0;
+      const result = this.structuralResult(operation, valid,
+        valid ? "Foglio assente e creabile." : "Foglio già presente o header mancanti.");
+      if (valid) {
+        backup.sheets[operation.sheet] = {
+          name: operation.sheet, exists: true,
+          headers: MigrationUtils.clone(headers), rows: []
+        };
+      }
+      this.appendResult(log, result);
+      return result;
+    }
+
+    if (operation.action === "ADD_COLUMN") {
+      const after = operation.after || {};
+      const valid = !!sheet && sheet.exists !== false &&
+        sheet.headers.indexOf(after.header) === -1 &&
+        Number(after.position) === sheet.headers.length + 1;
+      const result = this.structuralResult(operation, valid,
+        valid ? "Colonna assente e aggiungibile in coda." :
+          "Foglio, header o posizione della colonna non compatibili.");
+      if (valid) {
+        result.before = { headers: MigrationUtils.clone(sheet.headers) };
+        sheet.headers.push(after.header);
+        sheet.rows.forEach(row => { row.values[after.header] = ""; });
+      }
+      this.appendResult(log, result);
+      return result;
+    }
+
     const matches = sheet
       ? sheet.rows.filter(row => (
         this.matchesRow(row, operation.selector || {})
@@ -67,17 +102,52 @@ const DryRunEngine = {
       result.after = MigrationUtils.clone(operation.after);
     }
 
-    MigrationLog.append(log, {
+    if (valid) {
+      if (operation.action === "CREATE") {
+        const values = {};
+        sheet.headers.forEach(header => {
+          values[header] = operation.after[header] === undefined
+            ? "" : MigrationUtils.clone(operation.after[header]);
+        });
+        sheet.rows.push({ rowNumber: sheet.rows.length + 2, values: values });
+      } else if (operation.action === "DELETE") {
+        sheet.rows = sheet.rows.filter(row => row !== matches[0]);
+      } else {
+        Object.keys(operation.after || {}).forEach(key => {
+          matches[0].values[key] = MigrationUtils.clone(operation.after[key]);
+        });
+      }
+    }
+
+    this.appendResult(log, result);
+
+    return result;
+  },
+
+  structuralResult(operation, valid, reason) {
+    return {
       operationId: operation.operationId,
       action: operation.action,
       sheet: operation.sheet,
-      status: valid ? "PLANNED" : "REJECTED",
+      selector: {},
+      matchedRows: [],
+      expectedMatches: 0,
+      valid: valid,
+      reason: reason,
+      after: valid ? MigrationUtils.clone(operation.after) : null
+    };
+  },
+
+  appendResult(log, result) {
+    MigrationLog.append(log, {
+      operationId: result.operationId,
+      action: result.action,
+      sheet: result.sheet,
+      status: result.valid ? "PLANNED" : "REJECTED",
       before: result.before || null,
       after: result.after || null,
       message: result.reason
     });
-
-    return result;
   },
 
   matchesRow(row, selector) {

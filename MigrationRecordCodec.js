@@ -24,6 +24,10 @@ const MigrationRecordCodec = {
   },
 
   decode(value) {
+    if (value instanceof Date && !isNaN(value.getTime())) {
+      return new Date(value.getTime());
+    }
+
     if (
       value &&
       typeof value === "object" &&

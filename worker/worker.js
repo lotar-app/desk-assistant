@@ -75,6 +75,42 @@ export default {
 
       const body = await request.json();
 
+      if (url.pathname === "/project-tasks") {
+        const appsScriptResponse = await fetch(env.DESK_APPS_SCRIPT_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "text/plain;charset=utf-8"
+          },
+          body: JSON.stringify({
+            token: env.DESK_API_TOKEN,
+            action: "getProjectTasks",
+            projectName: body.projectName
+          })
+        });
+
+        const text = await appsScriptResponse.text();
+
+        let result;
+
+        try {
+          result = JSON.parse(text);
+        } catch {
+          result = {
+            raw: text
+          };
+        }
+
+        return json(
+          {
+            success: appsScriptResponse.ok,
+            httpStatus: appsScriptResponse.status,
+            result
+          },
+          appsScriptResponse.ok ? 200 : 502,
+          headers
+        );
+      }
+
       if (url.pathname === "/getProject") {
         const appsScriptResponse = await fetch(env.DESK_APPS_SCRIPT_URL, {
           method: "POST",

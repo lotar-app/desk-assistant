@@ -253,6 +253,10 @@ Per la Workspace Foundation, la sequenza amministrativa è:
 3. rieseguire il preflight Workspace Foundation;
 4. eseguire `WORKSPACE_FOUNDATION_V1` soltanto dopo un preflight positivo.
 
+Prima di pubblicare, seguire la checklist completa in
+[`DEPLOYMENT_RUNBOOK.md`](DEPLOYMENT_RUNBOOK.md), che documenta anche la gestione
+sicura di Web App, token e Cloudflare Worker.
+
 1. Verificare che le modifiche rispettino la separazione UI → Engine/Service → Repository → Google Sheets.
 2. Controllare che configurazione, schema dati e Timeline siano coerenti e che nessun segreto reale sia incluso nel repository.
 3. Eseguire i controlli sintattici e i test manuali pertinenti, inclusi `TestConversationEngine.js` o il client CLI quando il rilascio coinvolge l'API.

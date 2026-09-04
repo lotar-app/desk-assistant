@@ -26,27 +26,31 @@ const TaskService = {
       throw new Error("Titolo attività non valido.");
     }
 
+    const lock = LockService.getDocumentLock();
+    if (!lock.tryLock(30000)) {
+      throw new Error("Impossibile acquisire il lock per creare l'attività.");
+    }
+
+    let id;
     const now = new Date();
-
-    const id = Utilities.formatDate(
-      now,
-      Session.getScriptTimeZone(),
-      "'TSK-'yyyyMMddHHmmss"
-    );
-
-    TaskRepository.append([
-      id,
-      projectId,
-      title,
-      String(data.description || ""),
-      CONFIG.TASK_STATUS.OPEN,
-      String(data.priority || CONFIG.TASK_PRIORITY.NORMAL),
-      String(data.assignee || CONFIG.DEFAULT_OWNER),
-      data.dueDate || "",
-      now,
-      now,
-      ""
-    ]);
+    try {
+      id = this.nextUniqueId(now);
+      TaskRepository.append([
+        id,
+        projectId,
+        title,
+        String(data.description || ""),
+        CONFIG.TASK_STATUS.OPEN,
+        String(data.priority || CONFIG.TASK_PRIORITY.NORMAL),
+        String(data.assignee || CONFIG.DEFAULT_OWNER),
+        data.dueDate || "",
+        now,
+        now,
+        ""
+      ]);
+    } finally {
+      lock.releaseLock();
+    }
 
     addTimeline(
       projectId,
@@ -56,6 +60,23 @@ const TaskService = {
 
     return id;
 
+  },
+
+  nextUniqueId(date) {
+    const base = Utilities.formatDate(
+      date,
+      Session.getScriptTimeZone(),
+      "'TSK-'yyyyMMddHHmmssSSS"
+    );
+    if (!TaskRepository.idExists(base)) return base;
+
+    let sequence = 1;
+    let candidate;
+    do {
+      candidate = base + "-" + String(sequence).padStart(3, "0");
+      sequence++;
+    } while (TaskRepository.idExists(candidate));
+    return candidate;
   },
 
   update(id, data) {

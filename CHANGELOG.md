@@ -18,12 +18,17 @@
 - Aggiunto `MigrationLog` persistente, append-only e firmato per singola voce.
 - Aggiunti rollback eseguibile, precondizioni sullo stato corrente e compensazione in caso di errore del log.
 - Aggiunti test end-to-end su Spreadsheet e Drive simulati.
+- Materializzato il manifesto finale della Milestone 2B in stato `EXECUTION_READY`.
+- Sostituito l'ID scanner manuale con un ID derivato da `ProjectService`.
+- Materializzati come Date i timestamp storici di scanner e task v1.3.
+- Aggiunti firma separata del manifesto e validazione automatica completa del preflight.
 
 ### Safety
 - Nessun componente della Milestone 1 modifica Google Sheets.
 - Nessuna bonifica o migrazione Workspace viene eseguita.
 - Il manifesto reale resta in modalità `DRY_RUN_ONLY`; il rollback eseguibile richiede un piano autorizzato e conferma esplicita.
 - Il manifesto operativo v1.4 resta non autorizzato e nessun entry point mutativo viene eseguito automaticamente.
+- `EXECUTION_READY` non abilita il writer: resta necessaria un'autorizzazione esplicita successiva.
 
 ---
 

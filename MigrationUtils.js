@@ -1,7 +1,23 @@
 const MigrationUtils = {
 
   clone(value) {
-    return JSON.parse(JSON.stringify(value));
+    if (value instanceof Date && !isNaN(value.getTime())) {
+      return new Date(value.getTime());
+    }
+
+    if (Array.isArray(value)) {
+      return value.map(item => this.clone(item));
+    }
+
+    if (value && typeof value === "object") {
+      const cloned = {};
+      Object.keys(value).forEach(key => {
+        cloned[key] = this.clone(value[key]);
+      });
+      return cloned;
+    }
+
+    return value;
   },
 
   normalizeValue(value) {

@@ -42,6 +42,19 @@ function doPost(e) {
       );
     }
 
+    if (payload.action === "getProjectTasks") {
+      if (!payload.projectName) {
+        return jsonResponse({
+          success: false,
+          error: "Missing projectName"
+        });
+      }
+
+      return jsonResponse(
+        ConversationEngine.getProjectTasks(payload.projectName)
+      );
+    }
+
     const result = ConversationEngine.processConversationUpdate(
       payload.projectName,
       payload.data || {}

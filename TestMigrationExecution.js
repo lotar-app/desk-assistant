@@ -43,6 +43,7 @@ function testMigrationExecutionFramework() {
       confirmed: true,
       migrationId: manifest.migrationId,
       checksum: preparedManifest.checksum,
+      signature: preparedManifest.signature,
       backupChecksum: backup.checksum,
       phrase: "APPLY " + manifest.migrationId
     },
@@ -123,7 +124,7 @@ function testMigrationExecutionFramework() {
   }
   assertMigrationExecution(
     realManifestRejected,
-    "Il manifesto reale DRY_RUN_ONLY non è stato bloccato."
+    "Il manifesto reale non ancora EXECUTION_APPROVED non è stato bloccato."
   );
 
   let invalidConfirmationRejected = false;
@@ -163,6 +164,7 @@ function testMigrationExecutionFramework() {
         confirmed: true,
         migrationId: manifest.migrationId,
         checksum: MigrationManifest.prepare(manifest).checksum,
+        signature: MigrationManifest.prepare(manifest).signature,
         backupChecksum: driftBackup.checksum,
         phrase: "APPLY " + manifest.migrationId
       },
@@ -297,6 +299,11 @@ function createMigrationTestSpreadsheet(initialSheets) {
       }
       sheets[name] = createMigrationTestSheet(name, []);
       return sheets[name];
+    },
+    deleteSheet(sheet) {
+      const name = sheet.getName();
+      if (!sheets[name]) throw new Error("Foglio inesistente: " + name);
+      delete sheets[name];
     }
   };
 }
@@ -347,7 +354,13 @@ function createMigrationTestSheet(name, initialRows) {
       return range(row, column, rowCount, columnCount);
     },
     appendRow(values) { rows.push(values.slice()); },
-    deleteRow(rowNumber) { rows.splice(rowNumber - 1, 1); }
+    deleteRow(rowNumber) { rows.splice(rowNumber - 1, 1); },
+    insertColumnAfter(column) {
+      rows.forEach(row => row.splice(column, 0, ""));
+    },
+    deleteColumn(column) {
+      rows.forEach(row => row.splice(column - 1, 1));
+    }
   };
 }
 

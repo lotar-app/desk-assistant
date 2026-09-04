@@ -36,6 +36,14 @@ const MigrationSafetyGuard = {
       throw new Error("Checksum manifesto non coerente con il dry run.");
     }
 
+    if (
+      dryRun.manifestSignature !== prepared.signature ||
+      !confirmation ||
+      confirmation.signature !== prepared.signature
+    ) {
+      throw new Error("Firma manifesto non coerente con il dry run.");
+    }
+
     this.assertConfirmation(
       confirmation,
       manifest.migrationId,

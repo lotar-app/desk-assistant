@@ -129,6 +129,8 @@ const RollbackEngine = {
 
   inverseAction(action) {
     const inverse = {
+      CREATE_SHEET: "DELETE_SHEET",
+      ADD_COLUMN: "DELETE_COLUMN",
       CREATE: "DELETE",
       DELETE: "RESTORE",
       UPDATE: "RESTORE",

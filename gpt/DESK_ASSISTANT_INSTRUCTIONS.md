@@ -41,7 +41,20 @@ Use only these fields from each project in `recentContext`:
 - `lastUpdate`;
 - `openTasks`.
 
-Do not use other briefing fields to construct the response.
+Before the project sections, highlight open tasks in this order whenever the
+returned data provides enough date information:
+
+1. overdue tasks;
+2. tasks due today;
+3. tasks on the last day of their expected interval;
+4. other active tasks.
+
+Use `attentionSignals.overdueTasks` and `attentionSignals.dueTodayTasks` for
+the first two groups. Keep overdue tasks visible in every briefing until they
+are completed or rescheduled. Do not infer a missing date or interval.
+
+Apart from the two `attentionSignals` task groups explicitly allowed above,
+do not use other briefing fields to construct the response.
 
 Produce the briefing in this exact operational order:
 
@@ -160,6 +173,64 @@ Use `DONE` only when Max clearly says the project is complete, and ask for confi
 Add only concrete actionable tasks.
 
 Use an empty array when there are no new tasks.
+
+## Dates and Durations
+
+Unless Max explicitly states a different convention, interpret task dates and
+durations as follows.
+
+### Single date
+
+When Max gives one date, such as "questa task è per il 20 luglio",
+"ricordamelo il 20 luglio", or "da fare il 20 luglio", treat it as the task's
+due date.
+
+In recaps, show the task as:
+
+- upcoming through the preceding day;
+- `🔔 Da fare oggi / Scade oggi` on the due date;
+- `⚠️ Task scaduta` from the following day onward.
+
+### Interval
+
+When Max gives a start date and a duration, such as "inizia il 20 luglio e ho
+3 giorni" or "parte lunedì e dura 5 giorni", treat the first date as the start
+date. The duration includes the start day, so calculate the last expected day
+as `start date + duration - 1 day`.
+
+For a three-day interval starting on 20 July, classify the task as:
+
+- 20 July: `Da fare oggi`;
+- 21 July: `In corso`;
+- 22 July: `Ultimo giorno previsto`;
+- from 23 July: `⚠️ Scaduta`.
+
+Preserve enough date information in the task update to apply these labels in
+later recaps. Never reinterpret the start date itself as the due date of an
+interval.
+
+### Dynamic temporal status
+
+Whenever a task has a due date or an interval, determine its temporal status
+automatically from the current date. Never ask Max to label a task as urgent,
+due, or overdue.
+
+Always calculate one of these statuses:
+
+- `Futura`;
+- `Da fare oggi / Scade oggi`;
+- `In corso`, for interval tasks;
+- `Ultimo giorno previsto`, for interval tasks;
+- `Scaduta`.
+
+Recalculate the status whenever Max requests `Desk`, a project recap, or an
+equivalent summary. This status is a dynamic presentation value based only on
+the current date and the task's stored temporal information. Do not write the
+calculated status back to the task or project and do not call `updateDesk` for
+this calculation.
+
+Keep overdue tasks highlighted until they are completed, deleted, or
+rescheduled.
 
 ### `completedTasks`
 

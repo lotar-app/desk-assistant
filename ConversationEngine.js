@@ -39,6 +39,34 @@ const ConversationEngine = {
 
   },
 
+  getProjectTasks(projectName) {
+
+    const name = String(projectName || "").trim();
+
+    if (!name) {
+      throw new Error("Nome progetto non valido.");
+    }
+
+    const project = ProjectService.findByName(name);
+
+    if (!project) {
+      return {
+        success: false,
+        error: "PROJECT_NOT_FOUND"
+      };
+    }
+
+    return {
+      success: true,
+      projectId: project.id,
+      projectName: project.name,
+      tasks: DeskEngine.listProjectTasks(project.id, {
+        serialize: true
+      })
+    };
+
+  },
+
   processConversationUpdate(projectName, conversationData) {
 
     const name = String(projectName || "").trim();
