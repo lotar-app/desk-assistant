@@ -10,13 +10,20 @@ const TimelineRepository = {
       .getSheetByName(CONFIG.SHEETS.TIMELINE);
   },
 
-  append(data) {
+  append(data, headers) {
     if (this.sheet().getLastRow() === 0) {
-      this.sheet().appendRow(TIMELINE_CANONICAL_HEADERS);
+      this.sheet().appendRow(headers);
     }
 
     this.sheet().appendRow(data);
     return this.sheet().getLastRow();
+  },
+
+  appendLegacy(event) {
+    return this.append([
+      event.timestamp, String(event.projectId || ""),
+      String(event.eventType || ""), String(event.description || "")
+    ], TIMELINE_HEADERS);
   },
 
   appendEvent(event) {
@@ -25,7 +32,7 @@ const TimelineRepository = {
       String(event.taskId || ""), event.timestamp,
       String(event.eventType || ""), String(event.description || ""),
       String(event.author || "SYSTEM")
-    ]);
+    ], TIMELINE_CANONICAL_HEADERS);
   },
 
   nextRowNumber() {
@@ -68,11 +75,10 @@ const TimelineRepository = {
   },
 
   fromRow(row) {
-    const canonical = row.length >= 7 && (
-      String(row[4] || "").trim() !== "" ||
-      String(row[5] || "").trim() !== "" ||
-      String(row[6] || "").trim() !== ""
-    );
+    const canonical = row.length >= 7 &&
+      String(row[1] || "").trim() !== "" &&
+      String(row[4] || "").trim() !== "" &&
+      String(row[5] || "").trim() !== "";
     if (canonical) {
       return {
         id: row[0] || "", projectId: row[1] || "", taskId: row[2] || "",

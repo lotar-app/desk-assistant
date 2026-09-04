@@ -93,9 +93,12 @@ L'hardening pre-attivazione di autenticazione, route admin, migrazione Timeline
 e release checks è documentato in
 [`PROJECT_ACTIVITY_PHASE4A_HARDENING.md`](PROJECT_ACTIVITY_PHASE4A_HARDENING.md).
 
-La correzione dello schema Timeline, il parser backward-compatible e il
-registro delivery sono descritti in
+La correzione dello schema Timeline, il parser mixed-layout, lo split
+transizionale tra writer Desk legacy A-D e writer ProjectActivity canonico A-G,
+e il registro delivery sono descritti in
 [`PROJECT_ACTIVITY_TIMELINE_CANONICALIZATION.md`](PROJECT_ACTIVITY_TIMELINE_CANONICALIZATION.md).
+Non è autorizzato il rollout del writer canonico globale; pivot live e consumer
+esterni devono ancora essere verificati e il gate produzione resta `NO-GO`.
 
 L'architettura segue la pipeline completa dell'assistente:
 

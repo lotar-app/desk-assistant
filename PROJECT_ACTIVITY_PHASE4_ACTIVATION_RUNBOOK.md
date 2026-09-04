@@ -61,7 +61,8 @@ La sequenza più sicura è:
 2. creazione e migrazione D1, ancora non raggiungibile dal Worker attivo;
 3. caricamento/versionamento/deploy Apps Script backward-compatible;
 4. creazione del foglio tecnico `ProjectActivityTimelineDelivery`;
-5. verifica dei consumer e smoke del writer canonico a sette colonne;
+5. verifica dei consumer e smoke dello split transizionale: Desk legacy A-D,
+   ProjectActivity canonico A-G;
 6. deploy Worker con binding e autenticazione;
 7. smoke test tecnico;
 8. aggiornamento OpenAPI/Actions;
@@ -236,10 +237,12 @@ già un log. Rollback: eliminare il solo foglio tecnico tramite framework
 esclusivamente se non contiene righe; dopo la prima delivery mantenerlo e
 disattivare il caller Worker.
 
-Prima di attivare i writer canonici per Project, Task e memory event verificare
-gli eventuali consumer esterni della Timeline. Il parser accetta righe legacy e
-canoniche, ma un consumer esterno potrebbe non farlo. Nessuna riscrittura
-storica è autorizzata.
+La release transizionale mantiene Project, Task, memory event e `updateDesk`
+sul writer legacy a quattro valori. Solo ProjectActivity usa il writer canonico
+a sette colonne. Il parser interno accetta entrambe le forme nello stesso
+foglio. Non attivare il writer canonico globale: le pivot live e i consumer
+esterni restano UNKNOWN. Nessuna riscrittura storica è autorizzata e il gate di
+produzione resta NO-GO finché questi controlli non sono chiusi.
 
 ### 6. Preparare e pubblicare Worker — MUTATIVO
 

@@ -26,21 +26,36 @@ The future logical row is:
 | Description | Human-readable description, never a payload dump. |
 | Author | Normalized non-sensitive source: `SYSTEM`, `CUSTOM_GPT`, or `PROJECT_ACTIVITY`. |
 
-`TimelineRepository.fromRow` recognizes canonical rows by populated canonical
-tail fields and otherwise interprets A-D as the legacy layout, even below the
-seven current headers. Both layouts produce the common properties `timestamp`,
-`projectId`, `eventType`, and `description`.
+`TimelineRepository.fromRow` recognizes a canonical row only when Project ID,
+EventType, and Description are populated in their canonical positions. It
+otherwise interprets A-D as the legacy layout, even below the seven current
+headers. Requiring the structural fields avoids classifying a legacy row as
+canonical because of an isolated accidental value in E-G. Both layouts produce
+the common properties `timestamp`, `projectId`, `eventType`, and `description`.
 
-The canonical writer is `TimelineRepository.appendEvent`. Legacy services use
-`addTimeline` only as a compatibility adapter; no Service assembles positional
-rows directly.
+## Transitional writer split
+
+The production transition deliberately keeps two centralized writers:
+
+- `TimelineRepository.appendLegacy` writes exactly four physical values,
+  `timestamp | projectId | eventType | description`;
+- `TimelineRepository.appendEvent` writes the canonical seven-column row and
+  is reserved for the ProjectActivity sink.
+
+`addTimeline` is the compatibility adapter used by every existing Desk flow.
+It calls only `appendLegacy`; options formerly used to describe canonical ID,
+TaskID, and Author do not change the physical row. ProjectActivity bypasses
+this adapter and calls `appendEvent` after delivery-registry checks.
 
 ## Writer mappings
 
-- Project create/update: ID = Project ID, TaskID empty, Author `SYSTEM`.
-- Task create/complete: ID and TaskID = Task ID, Author `SYSTEM`.
-- Desk memory event: ID and TaskID empty, Author `CUSTOM_GPT`.
-- ProjectActivity: ID = Activity ID, TaskID empty, Author `PROJECT_ACTIVITY`.
+- Project create/update: legacy A-D row.
+- Task create/complete: legacy A-D row; the historical layout has no TaskID
+  column and the task remains represented in event type/description.
+- Desk memory event: legacy A-D row.
+- ProjectActivity: canonical row with ID = Activity ID, Project ID = projectId,
+  TaskID empty, Timestamp = createdAt, EventType and readable Description from
+  the outbox event, and Author `PROJECT_ACTIVITY`.
 
 The current event types remain stable. A future normalization of generic memory
 types requires a separate compatibility review.
@@ -77,9 +92,8 @@ part of activation.
 
 ## Rollout
 
-Before activating canonical writes for all legacy flows, inventory external
-consumers of Timeline and confirm that they accept mixed legacy/canonical rows.
-Until that check is complete the release is locally ready but production is
-NO-GO. Activation order: verified spreadsheet backup, compatible Apps Script,
-registry-sheet migration, canonical-writer smoke, D1, Worker, ProjectActivity
-smoke, then GPT. Never rewrite historical Timeline rows automatically.
+Mixed-layout parsing is locally supported, but production remains NO-GO. Live
+pivots and external consumers are still UNKNOWN. The global canonical writer
+for Project, Task, memory, or `updateDesk` is not authorized. Activation may
+introduce canonical rows only for ProjectActivity after those remaining checks
+and the normal gates. Never rewrite historical Timeline rows automatically.

@@ -37,6 +37,11 @@ for file in \
 done
 pass "required release files"
 
+! rg -q 'WorkspaceMigration' \
+  "$REPO_ROOT/PROJECT_ACTIVITY_PHASE4_ACTIVATION_RUNBOOK.md" ||
+  fail "WorkspaceMigration must stay outside the ProjectActivity activation path"
+pass "legacy WorkspaceMigration excluded from activation path"
+
 git -C "$REPO_ROOT" show "$EXPECTED_COMMIT:ApiConfig.js" |
   rg -q 'CAMBIA_QUESTO_TOKEN' || fail "committed ApiConfig.js must contain placeholder"
 pass "committed Apps Script token placeholder"

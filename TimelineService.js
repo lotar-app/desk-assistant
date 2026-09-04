@@ -4,10 +4,9 @@
 
 function addTimeline(projectId, type, text, options) {
   options = options || {};
-  return TimelineRepository.appendEvent({
-    id: options.id || "", projectId: projectId,
-    taskId: options.taskId || "", timestamp: options.timestamp || new Date(),
-    eventType: type, description: text, author: options.author || "SYSTEM"
+  return TimelineRepository.appendLegacy({
+    projectId: projectId, timestamp: options.timestamp || new Date(),
+    eventType: type, description: text
   });
 }
 
