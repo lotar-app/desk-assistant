@@ -347,6 +347,172 @@ paths:
           description: INTERNAL_ERROR
         "503":
           description: D1_NOT_CONFIGURED
+  /project-activity/update:
+    post:
+      operationId: updateProjectActivity
+      x-openai-isConsequential: true
+      summary: Atomically create or update a ProjectActivity snapshot
+      description: >
+        Applies an explicit versioned and idempotent D1 mutation. It never
+        creates Projects and does not deliver the resulting outbox event to
+        Apps Script in Phase 2.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - action
+                - project
+                - activity
+                - expectedSnapshotVersion
+                - idempotencyKey
+              properties:
+                action:
+                  type: string
+                  const: updateProjectActivity
+                project:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    id: { type: string }
+                    name: { type: string }
+                  anyOf:
+                    - required: [id]
+                    - required: [name]
+                activity:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    id: { type: string }
+                    name: { type: string }
+                    kind: { type: string }
+                    createIfMissing: { type: boolean, default: false }
+                  anyOf:
+                    - required: [id]
+                    - required: [name]
+                expectedSnapshotVersion:
+                  type: integer
+                  minimum: 0
+                  description: Existing version, or exactly 0 for creation.
+                idempotencyKey:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                patch:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    set:
+                      type: object
+                      additionalProperties: false
+                      properties:
+                        status: { type: string }
+                        focus: { type: string }
+                        nextAction: { type: string }
+                        summary: { type: string }
+                    clear:
+                      type: array
+                      uniqueItems: true
+                      items:
+                        type: string
+                        enum: [status, focus, nextAction, summary]
+                items:
+                  type: array
+                  items:
+                    oneOf:
+                      - type: object
+                        additionalProperties: false
+                        required: [op, key, value]
+                        properties:
+                          op: { type: string, const: UPSERT }
+                          key: { type: string, minLength: 1 }
+                          type:
+                            type: string
+                            enum: [DECISION, CONTENT, TECHNICAL_CONTEXT]
+                          value: {}
+                          approvedAt: { type: string, format: date-time }
+                          reason: { type: string }
+                      - type: object
+                        additionalProperties: false
+                        required: [op, key, reason]
+                        properties:
+                          op: { type: string, const: DELETE }
+                          key: { type: string, minLength: 1 }
+                          reason: { type: string, minLength: 1 }
+                aliases:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    add:
+                      type: array
+                      uniqueItems: true
+                      items: { type: string }
+                    remove:
+                      type: array
+                      uniqueItems: true
+                      items: { type: string }
+                timeline:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    mode: { type: string, enum: [AUTO] }
+                    summary: { type: string }
+                source:
+                  type: object
+                  additionalProperties: true
+                  properties:
+                    type: { type: string }
+                    conversationId: { type: string }
+      responses:
+        "200":
+          description: Applied or idempotently replayed update
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - success
+                  - activityId
+                  - projectId
+                  - created
+                  - noOp
+                  - snapshotVersion
+                  - changedKeys
+                  - timelineEventId
+                  - timelineDelivery
+                  - snapshot
+                properties:
+                  success: { type: boolean, const: true }
+                  activityId: { type: string }
+                  projectId: { type: string }
+                  created: { type: boolean }
+                  noOp: { type: boolean }
+                  snapshotVersion: { type: integer }
+                  changedKeys:
+                    type: array
+                    items: { type: string }
+                  timelineEventId:
+                    type: [string, "null"]
+                  timelineDelivery:
+                    type: [string, "null"]
+                    enum: [PENDING, null]
+                  snapshot:
+                    type: object
+                    additionalProperties: true
+        "400":
+          description: INVALID_PATCH, INVALID_ITEM_OPERATION, or INVALID_ITEM_TYPE
+        "404":
+          description: PROJECT_NOT_FOUND or ACTIVITY_NOT_FOUND
+        "409":
+          description: SNAPSHOT_VERSION_CONFLICT, IDEMPOTENCY_CONFLICT, or ALIAS_CONFLICT
+        "500":
+          description: INTERNAL_ERROR
+        "503":
+          description: D1_NOT_CONFIGURED
   /workspace-briefing:
     post:
       operationId: getWorkspaceBriefing

@@ -1,5 +1,6 @@
 import { ProjectActivityRepository } from "./project-activity/repository.mjs";
 import { ProjectActivityService } from "./project-activity/service.mjs";
+import { ProjectActivityWriteService } from "./project-activity/write-service.mjs";
 import { ProjectActivityError, activityError } from "./project-activity/errors.mjs";
 
 export default {
@@ -40,9 +41,13 @@ export default {
     try {
       const url = new URL(request.url);
 
-      if (url.pathname === "/project-activity") {
+      if (url.pathname === "/project-activity" ||
+          url.pathname === "/project-activity/update") {
         const body = await request.json();
-        return getProjectActivity(body, env, headers);
+        return body.action === "updateProjectActivity" ||
+          url.pathname === "/project-activity/update"
+          ? updateProjectActivity(body, env, headers)
+          : getProjectActivity(body, env, headers);
       }
 
       if (url.pathname === "/workspace-briefing") {
@@ -226,6 +231,34 @@ async function getProjectActivity(body, env, headers) {
       resolveProjectName: name => resolveProjectByName(name, env)
     });
     return json(await service.get(body), 200, headers);
+  } catch (error) {
+    const known = error instanceof ProjectActivityError;
+    const normalized = known ? error : activityError("INTERNAL_ERROR");
+    return json({
+      success: false,
+      error: {
+        code: normalized.code,
+        message: normalized.message,
+        ...(normalized.details ? { details: normalized.details } : {})
+      }
+    }, normalized.status, headers);
+  }
+}
+
+async function updateProjectActivity(body, env, headers) {
+  try {
+    if (!env.DB || typeof env.DB.prepare !== "function" ||
+        typeof env.DB.batch !== "function") {
+      throw activityError("D1_NOT_CONFIGURED");
+    }
+    const repository = new ProjectActivityRepository(env.DB);
+    const readService = new ProjectActivityService(repository, {
+      resolveProjectName: name => resolveProjectByName(name, env)
+    });
+    const writeService = new ProjectActivityWriteService(repository, readService, {
+      resolveProjectName: name => resolveProjectByName(name, env)
+    });
+    return json(await writeService.update(body), 200, headers);
   } catch (error) {
     const known = error instanceof ProjectActivityError;
     const normalized = known ? error : activityError("INTERNAL_ERROR");

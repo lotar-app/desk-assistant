@@ -63,13 +63,18 @@ Il Cloudflare Worker, esterno a questo repository, aggiunge il token prima di in
 
 Il Workspace Briefing offre una vista operativa unica dello stato corrente di Desk. Aggrega Projects, Tasks aperte e Timeline per mostrare contesto recente, segnali di attenzione, priorità registrate, prossime azioni disponibili, contesti in attesa e possibili punti di partenza. Il briefing è esclusivamente read-only: non crea e non aggiorna dati.
 
-## ProjectActivity Phase 1
+## ProjectActivity
 
 Il Worker espone `getProjectActivity` su `/project-activity` per leggere snapshot
 consolidati da Cloudflare D1 tramite lookup esatto per ID o alias normalizzato.
 Sono disponibili le modalità `COMPACT`, `FULL` e `KEYS`; nessuna di esse legge
 Timeline o revision history. Configurazione locale, schema e contratti sono
 documentati in [`PROJECT_ACTIVITY_PHASE1.md`](PROJECT_ACTIVITY_PHASE1.md).
+
+La Fase 2 aggiunge `updateProjectActivity` su `/project-activity/update`, con
+batch atomico D1, optimistic concurrency, idempotenza, revisioni e outbox non
+consegnata. Il write contract è in
+[`PROJECT_ACTIVITY_PHASE2.md`](PROJECT_ACTIVITY_PHASE2.md).
 
 L'architettura segue la pipeline completa dell'assistente:
 
