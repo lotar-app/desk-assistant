@@ -1,6 +1,7 @@
 import { ProjectActivityRepository } from "./project-activity/repository.mjs";
 import { ProjectActivityService } from "./project-activity/service.mjs";
 import { ProjectActivityWriteService } from "./project-activity/write-service.mjs";
+import { ProjectActivityOutboxDeliveryService } from "./project-activity/outbox-delivery.mjs";
 import { ProjectActivityError, activityError } from "./project-activity/errors.mjs";
 
 export default {
@@ -300,6 +301,29 @@ function json(payload, status, headers) {
         ...headers,
         "Content-Type": "application/json"
       }
+    }
+  );
+}
+
+export async function deliverOutboxEvent(eventId, env, options = {}) {
+  return outboxDeliveryService(env, options).deliverOutboxEvent(eventId);
+}
+
+export async function deliverPendingOutbox(limit, env, options = {}) {
+  return outboxDeliveryService(env, options).deliverPendingOutbox(limit);
+}
+
+function outboxDeliveryService(env, options) {
+  if (!env || !env.DB || typeof env.DB.prepare !== "function") {
+    throw activityError("D1_NOT_CONFIGURED");
+  }
+  return new ProjectActivityOutboxDeliveryService(
+    new ProjectActivityRepository(env.DB),
+    {
+      appsScriptUrl: env.DESK_APPS_SCRIPT_URL,
+      token: env.DESK_API_TOKEN,
+      fetch: options.fetch,
+      now: options.now
     }
   );
 }

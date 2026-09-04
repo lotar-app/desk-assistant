@@ -55,6 +55,20 @@ function doPost(e) {
       );
     }
 
+    if (payload.action === "appendProjectActivityTimelineEvent") {
+      try {
+        return jsonResponse(appendProjectActivityTimelineEvent(payload));
+      } catch (sinkError) {
+        return jsonResponse({
+          success: false,
+          error: {
+            code: sinkError.code || "INTERNAL_ERROR",
+            message: sinkError.message
+          }
+        });
+      }
+    }
+
     const result = ConversationEngine.processConversationUpdate(
       payload.projectName,
       payload.data || {}

@@ -76,6 +76,11 @@ batch atomico D1, optimistic concurrency, idempotenza, revisioni e outbox non
 consegnata. Il write contract è in
 [`PROJECT_ACTIVITY_PHASE2.md`](PROJECT_ACTIVITY_PHASE2.md).
 
+La Fase 3A aggiunge la delivery affidabile dell'outbox verso Timeline, con
+sink Apps Script idempotente basato su `EventId`. Flusso, migrazioni e retry
+sono documentati in
+[`PROJECT_ACTIVITY_PHASE3A.md`](PROJECT_ACTIVITY_PHASE3A.md).
+
 L'architettura segue la pipeline completa dell'assistente:
 
 ```text

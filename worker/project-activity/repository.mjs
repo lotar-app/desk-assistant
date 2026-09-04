@@ -100,6 +100,47 @@ export class ProjectActivityRepository {
     `).bind(projectId, aliasKey).first();
   }
 
+  async findOutboxEvent(eventId) {
+    return this.db.prepare(`
+      SELECT event_id, activity_id, project_id, event_type, description,
+             payload_json, created_at, delivered_at, attempts, last_error
+      FROM timeline_outbox
+      WHERE event_id = ?
+      LIMIT 1
+    `).bind(eventId).first();
+  }
+
+  async listPendingOutbox(limit) {
+    const result = await this.db.prepare(`
+      SELECT event_id, activity_id, project_id, event_type, description,
+             payload_json, created_at, delivered_at, attempts, last_error
+      FROM timeline_outbox
+      WHERE delivered_at IS NULL
+      ORDER BY created_at, event_id
+      LIMIT ?
+    `).bind(limit).all();
+    return result.results || [];
+  }
+
+  async recordOutboxSuccess(eventId, deliveredAt) {
+    return this.db.prepare(`
+      UPDATE timeline_outbox
+      SET delivered_at = COALESCE(delivered_at, ?),
+          attempts = attempts + 1,
+          last_error = NULL
+      WHERE event_id = ?
+    `).bind(deliveredAt, eventId).run();
+  }
+
+  async recordOutboxFailure(eventId, message) {
+    return this.db.prepare(`
+      UPDATE timeline_outbox
+      SET attempts = attempts + 1,
+          last_error = CASE WHEN delivered_at IS NULL THEN ? ELSE last_error END
+      WHERE event_id = ?
+    `).bind(message, eventId).run();
+  }
+
   async commitWrite(plan) {
     const statements = [];
     const idempotencySql = plan.created

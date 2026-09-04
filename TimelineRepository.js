@@ -18,6 +18,23 @@ const TimelineRepository = {
     this.sheet().appendRow(data);
   },
 
+  findByEventId(eventId) {
+    const target = String(eventId || "").trim();
+    if (!target) return null;
+    const values = this.sheet().getDataRange().getValues();
+    if (!values.length) return null;
+    const eventIdIndex = values[0].indexOf("EventId");
+    if (eventIdIndex === -1) {
+      throw new Error("TIMELINE_EVENT_ID_SCHEMA_MISSING");
+    }
+    for (let index = 1; index < values.length; index++) {
+      if (String(values[index][eventIdIndex] || "").trim() === target) {
+        return this.fromRow(values[index]);
+      }
+    }
+    return null;
+  },
+
   list() {
 
     const values = this.sheet().getDataRange().getValues();
@@ -51,7 +68,8 @@ const TimelineRepository = {
       date: row[0],
       projectId: row[1],
       type: row[2],
-      description: row[3]
+      description: row[3],
+      eventId: row[4] || null
     };
 
   }
