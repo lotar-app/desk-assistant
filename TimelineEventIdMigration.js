@@ -1,5 +1,7 @@
 const TimelineEventIdMigration = {
   MIGRATION_ID: "TIMELINE_EVENT_ID_V1",
+  MIGRATION_TYPE: "STRUCTURAL",
+  EXECUTION_MODE: "EXECUTION_APPROVED",
 
   createManifest(dataSource) {
     dataSource = dataSource || MigrationDataSource.forSpreadsheet(
@@ -14,7 +16,8 @@ const TimelineEventIdMigration = {
     return MigrationManifest.prepare({
       migrationId: this.MIGRATION_ID,
       version: "1",
-      mode: "STRUCTURAL",
+      migrationType: this.MIGRATION_TYPE,
+      mode: this.EXECUTION_MODE,
       baseline: {
         sheets: {
           Timeline: {

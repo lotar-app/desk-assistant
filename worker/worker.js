@@ -3,6 +3,8 @@ import { ProjectActivityService } from "./project-activity/service.mjs";
 import { ProjectActivityWriteService } from "./project-activity/write-service.mjs";
 import { ProjectActivityOutboxDeliveryService } from "./project-activity/outbox-delivery.mjs";
 import { ProjectActivityError, activityError } from "./project-activity/errors.mjs";
+import { OutboxDeliveryError } from "./project-activity/outbox-delivery.mjs";
+import { requireBearer } from "./auth.mjs";
 
 export default {
   async fetch(request, env) {
@@ -44,11 +46,23 @@ export default {
 
       if (url.pathname === "/project-activity" ||
           url.pathname === "/project-activity/update") {
+        const auth = await requireBearer(request, env.PROJECT_ACTIVITY_ACTIONS_TOKEN);
+        if (!auth.ok) return authError(auth, headers);
         const body = await request.json();
         return body.action === "updateProjectActivity" ||
           url.pathname === "/project-activity/update"
           ? updateProjectActivity(body, env, headers)
           : getProjectActivity(body, env, headers);
+      }
+
+      if (url.pathname === "/internal/project-activity/outbox/deliver" ||
+          url.pathname === "/internal/project-activity/outbox/deliver-pending") {
+        const auth = await requireBearer(request, env.PROJECT_ACTIVITY_ADMIN_TOKEN);
+        if (!auth.ok) return authError(auth, headers);
+        const body = await request.json();
+        return url.pathname.endsWith("deliver-pending")
+          ? deliverPendingAdmin(body, env, headers)
+          : deliverOneAdmin(body, env, headers);
       }
 
       if (url.pathname === "/workspace-briefing") {
@@ -303,6 +317,59 @@ function json(payload, status, headers) {
       }
     }
   );
+}
+
+function authError(auth, headers) {
+  return json({ success: false, error: { code: auth.code,
+    message: auth.status === 401 ? "Unauthorized." : "Authentication is not configured." } },
+  auth.status, headers);
+}
+
+async function deliverOneAdmin(body, env, headers) {
+  const eventId = String(body && body.eventId || "").trim();
+  if (!eventId || eventId.length > 200 || !/^[A-Za-z0-9._:-]+$/.test(eventId)) {
+    return json({ success: false, error: { code: "INVALID_EVENT_ID",
+      message: "eventId is required and must use a safe format." } }, 400, headers);
+  }
+  try {
+    const result = await deliverOutboxEvent(eventId, env);
+    return json({ success: true, eventId: result.eventId,
+      delivered: result.alreadyDelivered !== true,
+      alreadyDelivered: result.alreadyDelivered === true,
+      attempts: result.attempts,
+      deliveredAt: result.deliveredAt || null,
+      idempotentReplay: result.idempotentReplay === true }, 200, headers);
+  } catch (error) {
+    return outboxAdminError(error, headers);
+  }
+}
+
+async function deliverPendingAdmin(body, env, headers) {
+  const limit = body && body.limit === undefined ? 10 : body.limit;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    return json({ success: false, error: { code: "INVALID_DELIVERY_LIMIT",
+      message: "limit must be an integer between 1 and 100." } }, 400, headers);
+  }
+  try {
+    const events = await deliverPendingOutbox(limit, env);
+    const delivered = events.filter(event => event.success).length;
+    return json({ success: true, attempted: events.length, delivered,
+      failed: events.length - delivered,
+      events: events.map(event => ({ eventId: event.eventId,
+        success: event.success, alreadyDelivered: event.alreadyDelivered === true,
+        error: event.error || null, retryable: event.retryable === true })) }, 200, headers);
+  } catch (error) {
+    return outboxAdminError(error, headers);
+  }
+}
+
+function outboxAdminError(error, headers) {
+  const known = error instanceof OutboxDeliveryError || error instanceof ProjectActivityError;
+  const code = known ? error.code : "INTERNAL_ERROR";
+  const status = code === "OUTBOX_EVENT_NOT_FOUND" ? 404 :
+    code === "D1_NOT_CONFIGURED" || code === "AUTH_NOT_CONFIGURED" ? 503 : 502;
+  return json({ success: false, error: { code, message: known ? error.message :
+    "Internal error." } }, status, headers);
 }
 
 export async function deliverOutboxEvent(eventId, env, options = {}) {

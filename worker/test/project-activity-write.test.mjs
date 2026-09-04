@@ -349,8 +349,9 @@ test("write planning usa lookup indirizzati anche con molte revisioni", async ()
 test("Worker update restituisce D1_NOT_CONFIGURED senza binding", async () => {
   const response = await worker.fetch(new Request("https://desk.test/project-activity/update", {
     method: "POST",
+    headers: { Authorization: "Bearer actions-test-token" },
     body: JSON.stringify({ action: "updateProjectActivity" })
-  }), {});
+  }), { PROJECT_ACTIVITY_ACTIONS_TOKEN: "actions-test-token" });
   assert.equal(response.status, 503);
   assert.equal((await response.json()).error.code, "D1_NOT_CONFIGURED");
 });

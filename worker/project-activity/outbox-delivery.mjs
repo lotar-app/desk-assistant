@@ -21,7 +21,8 @@ export class ProjectActivityOutboxDeliveryService {
     const event = await this.repository.findOutboxEvent(String(eventId || "").trim());
     if (!event) throw deliveryError("OUTBOX_EVENT_NOT_FOUND");
     if (event.delivered_at) {
-      return deliveryResult(event, { alreadyDelivered: true });
+      return deliveryResult(event, { alreadyDelivered: true,
+        attempts: Number(event.attempts), deliveredAt: event.delivered_at });
     }
     let sink;
     try {

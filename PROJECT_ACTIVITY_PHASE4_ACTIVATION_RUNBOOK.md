@@ -35,7 +35,8 @@ Prima del GO verificare manualmente:
 
 ## Blocchi pre-attivazione
 
-Lo stato corrente è **NO-GO** finché non vengono implementati e revisionati:
+I blocchi seguenti sono stati implementati in Fase 4A e devono essere verificati
+dal checker e dalla review prima del GO:
 
 1. entrypoint amministrativi dedicati per `TimelineEventIdMigration`, con
    preflight, backup logico, dry-run, backup fisico, conferma forte, esecuzione
@@ -44,19 +45,15 @@ Lo stato corrente è **NO-GO** finché non vengono implementati e revisionati:
 2. un trigger Worker autenticato e limitato per invocare
    `deliverOutboxEvent`/`deliverPendingOutbox`. Le primitive non sono oggi
    raggiungibili nel Worker deployato e non esiste scheduler;
-3. autenticazione inbound delle route ProjectActivity. L'OpenAPI e il Worker
-   non definiscono né verificano attualmente credenziali client: la route di
-   scrittura non deve essere esposta così in produzione;
-4. una release candidate aggiornata: lo script esistente è specifico per
-   Workspace Foundation e richiede `origin/main == release commit`;
+3. autenticazione inbound delle route ProjectActivity tramite secret Actions;
+4. checker release ProjectActivity read-only in
+   `scripts/project-activity-release-check.sh`;
 5. una decisione su una fixture persistente: non esiste una delete API sicura
    per ProjectActivity, quindi il primo smoke non può promettere cleanup.
 
-La correzione consigliata usa un secret inbound distinto, per esempio
-`DESK_ACTIONS_TOKEN`, configurato come autenticazione bearer del Custom GPT e
-validato dal Worker. Un secondo secret amministrativo o Cloudflare Access deve
-proteggere la delivery manuale. Non riutilizzare automaticamente il token
-Worker→Apps Script e non commettere alcun valore.
+I secret scelti sono `PROJECT_ACTIVITY_ACTIONS_TOKEN` e
+`PROJECT_ACTIVITY_ADMIN_TOKEN`. Restano separati da `DESK_API_TOKEN` e non
+devono essere committati.
 
 ## Ordine consigliato
 
@@ -259,7 +256,7 @@ command line o nei log:
 cd worker
 npx wrangler secret put DESK_API_TOKEN
 npx wrangler secret put DESK_APPS_SCRIPT_URL
-npx wrangler secret put DESK_ACTIONS_TOKEN
+npx wrangler secret put PROJECT_ACTIVITY_ACTIONS_TOKEN
 npx wrangler secret put PROJECT_ACTIVITY_ADMIN_TOKEN
 npx wrangler deploy
 ```

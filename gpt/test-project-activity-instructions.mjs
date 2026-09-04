@@ -98,5 +98,7 @@ test("OpenAPI espone read/write ProjectActivity ma non il sink interno", () => {
   assert.match(openapi, /operationId: updateProjectActivity/);
   assert.match(openapi, /expectedSnapshotVersion:/);
   assert.match(openapi, /idempotencyKey:/);
+  assert.match(openapi, /ProjectActivityBearer/);
+  assert.match(openapi, /scheme: bearer/);
   assert.equal(openapi.includes("appendProjectActivityTimelineEvent"), false);
 });

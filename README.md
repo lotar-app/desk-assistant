@@ -89,6 +89,10 @@ Il piano di attivazione controllata, attualmente in stato `NO-GO` fino alla
 chiusura dei prerequisiti di hardening, è in
 [`PROJECT_ACTIVITY_PHASE4_ACTIVATION_RUNBOOK.md`](PROJECT_ACTIVITY_PHASE4_ACTIVATION_RUNBOOK.md).
 
+L'hardening pre-attivazione di autenticazione, route admin, migrazione Timeline
+e release checks è documentato in
+[`PROJECT_ACTIVITY_PHASE4A_HARDENING.md`](PROJECT_ACTIVITY_PHASE4A_HARDENING.md).
+
 L'architettura segue la pipeline completa dell'assistente:
 
 ```text

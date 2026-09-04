@@ -237,6 +237,8 @@ paths:
                             const: PROJECT_NOT_FOUND
   /project-activity:
     post:
+      security:
+        - ProjectActivityBearer: []
       operationId: getProjectActivity
       x-openai-isConsequential: false
       summary: Read a consolidated ProjectActivity snapshot
@@ -349,6 +351,8 @@ paths:
           description: D1_NOT_CONFIGURED
   /project-activity/update:
     post:
+      security:
+        - ProjectActivityBearer: []
       operationId: updateProjectActivity
       x-openai-isConsequential: true
       summary: Atomically create or update a ProjectActivity snapshot
@@ -628,3 +632,12 @@ paths:
                             additionalProperties: true
                       error:
                         type: string
+components:
+  securitySchemes:
+    ProjectActivityBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: API_KEY
+      description: >
+        Configure the ProjectActivity Actions API key as Bearer authentication
+        in the Custom GPT editor. Never place the key in this schema.

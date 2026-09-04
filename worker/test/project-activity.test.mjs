@@ -247,8 +247,9 @@ test("mode invalido", async () => {
 
 test("Worker restituisce D1_NOT_CONFIGURED senza binding", async () => {
   const response = await worker.fetch(new Request("https://desk.test/project-activity", {
-    method: "POST", body: JSON.stringify({ activity: "Black Winter" })
-  }), {});
+    method: "POST", headers: { Authorization: "Bearer actions-test-token" },
+    body: JSON.stringify({ activity: "Black Winter" })
+  }), { PROJECT_ACTIVITY_ACTIONS_TOKEN: "actions-test-token" });
   assert.equal(response.status, 503);
   assert.equal((await response.json()).error.code, "D1_NOT_CONFIGURED");
 });
