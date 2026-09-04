@@ -81,9 +81,9 @@ checker non crea risorse, non carica Apps Script e non esegue deploy.
 La fixture può restare perché è isolata, nominata esplicitamente come test e non
 contiene dati commerciali. Le istruzioni GPT non devono proporla nei normali
 retrieval: viene letta soltanto su riferimento esplicito al canonical name o
-all'ID. Il repository non identifica con certezza un Project tecnico reale:
-la scelta manuale di un Project esistente non commerciale resta prerequisito
-NO-GO. Non creare automaticamente un Project e non improvvisare cleanup SQL.
+all'ID. Max ha approvato il Project tecnico `Desk - Gestione task API`, ID
+`PRJ-20260720130424`. Non creare automaticamente un Project e non improvvisare
+cleanup SQL.
 
 ## Stato
 

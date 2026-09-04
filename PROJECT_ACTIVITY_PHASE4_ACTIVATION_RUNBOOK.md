@@ -4,11 +4,15 @@ Questo documento è un piano e non autorizza creazioni, migrazioni, deploy,
 scritture reali o modifiche al Custom GPT. Comandi marcati `MUTATIVO` devono
 essere eseguiti solo in una successiva sessione autorizzata.
 
-## Stato rilevabile e unknown
+## Stato rilevabile e verifiche completate
 
-Baseline applicativa verificata: branch `feature/projectactivity-phase3b`,
-commit `60a57d1d643f3cb4c1ac804cb2c6325ecc9b178b`. `main` e `origin/main` risultano
-ancora a `0e149c0`; quindi produzione non può essere assunta uguale alla branch.
+Baseline funzionale verificata: branch
+`feature/projectactivity-timeline-schema-fix`, commit
+`1cb122ed9e582b9600377886d98a6ae53bdbc235`. L'eventuale commit documentale
+successivo costituisce il release commit finale senza modificare questa
+baseline funzionale. Al precheck precedente `main` e `origin/main` erano ancora
+a `0e149c0`; il Gate 0 era bloccato soltanto perché la release non era ancora
+stata integrata nel remoto.
 
 Il repository identifica il Worker `twilight-rice-7a74`, server OpenAPI
 `https://twilight-rice-7a74.fastmax.workers.dev`, binding atteso `DB`, database
@@ -23,14 +27,21 @@ stampati. `.claspignore` esclude `worker/**` ma include i file JavaScript root;
 `clasp push` sostituisce il contenuto remoto, quindi va usata esclusivamente una
 copia pulita e controllata.
 
-Prima del GO verificare manualmente:
+Il 2026-09-04 Max ha completato sullo Spreadsheet Desk live l'audit dei
+consumer Timeline: nessun foglio nascosto, named range, trigger installabile,
+foglio/intervallo protetto o pivot su alcun foglio; nessuna formula visibile o
+convalida dati sulla Timeline; nessun oggetto o grafico visibile sulla Timeline;
+nessun consumer esterno noto di Desk/Timeline. Il filtro Timeline è rimasto
+invariato. Il gate architetturale del rollout transizionale è quindi
+tecnicamente GO.
+
+Restano da verificare nei gate operativi:
 
 - account Cloudflare, account ID, Worker attivo, version ID e route reali;
 - autenticazione Wrangler e disponibilità del piano D1;
 - URL e deployment/versione Apps Script attivi;
 - corrispondenza del token Worker/Apps Script senza mostrarlo;
 - intestazioni e numero righe reali di Timeline e stato MigrationLog;
-- consumer esterni della Timeline e compatibilità con righe canoniche miste;
 - OpenAPI e istruzioni effettivamente salvate nel Custom GPT;
 - commit realmente pubblicato in ciascun componente.
 
@@ -240,9 +251,10 @@ disattivare il caller Worker.
 La release transizionale mantiene Project, Task, memory event e `updateDesk`
 sul writer legacy a quattro valori. Solo ProjectActivity usa il writer canonico
 a sette colonne. Il parser interno accetta entrambe le forme nello stesso
-foglio. Non attivare il writer canonico globale: le pivot live e i consumer
-esterni restano UNKNOWN. Nessuna riscrittura storica è autorizzata e il gate di
-produzione resta NO-GO finché questi controlli non sono chiusi.
+foglio. Non attivare il writer canonico globale: il rollout approvato mantiene
+lo split transizionale. Pivot e consumer esterni sono stati verificati
+manualmente senza rilevare dipendenze. Nessuna riscrittura storica è
+autorizzata.
 
 ### 6. Preparare e pubblicare Worker — MUTATIVO
 
@@ -340,7 +352,7 @@ GO soltanto con tutte le caselle:
 - [ ] autenticazione inbound e admin implementata e testata;
 - [ ] entrypoint migration registro delivery sicuri e revisionati;
 - [ ] backup Timeline fisico verificato;
-- [ ] schema Timeline reale e consumer esterni verificati;
+- [x] schema Timeline reale, pivot e consumer esterni verificati;
 - [ ] registro `ProjectActivityTimelineDelivery` creato e vuoto al post-check;
 - [ ] D1 creato con ID reale e binding `DB` corretto;
 - [ ] migrazioni 0001/0002/0003 e indici verificati;

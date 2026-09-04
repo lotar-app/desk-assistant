@@ -85,8 +85,8 @@ La Fase 3B definisce il comportamento di recupero e consolidamento automatico
 del Desk Assistant, senza attivare il runtime reale. Policy e limiti sono in
 [`PROJECT_ACTIVITY_PHASE3B.md`](PROJECT_ACTIVITY_PHASE3B.md).
 
-Il piano di attivazione controllata, attualmente in stato `NO-GO` fino alla
-chiusura dei prerequisiti di hardening, è in
+Il piano di attivazione controllata, con architettura transizionale tecnicamente
+`GO` e gate operativi ancora da completare, è in
 [`PROJECT_ACTIVITY_PHASE4_ACTIVATION_RUNBOOK.md`](PROJECT_ACTIVITY_PHASE4_ACTIVATION_RUNBOOK.md).
 
 L'hardening pre-attivazione di autenticazione, route admin, migrazione Timeline
@@ -97,8 +97,9 @@ La correzione dello schema Timeline, il parser mixed-layout, lo split
 transizionale tra writer Desk legacy A-D e writer ProjectActivity canonico A-G,
 e il registro delivery sono descritti in
 [`PROJECT_ACTIVITY_TIMELINE_CANONICALIZATION.md`](PROJECT_ACTIVITY_TIMELINE_CANONICALIZATION.md).
-Non è autorizzato il rollout del writer canonico globale; pivot live e consumer
-esterni devono ancora essere verificati e il gate produzione resta `NO-GO`.
+Non è autorizzato il rollout del writer canonico globale. Il controllo manuale
+live non ha rilevato pivot e Max ha confermato che non esistono consumer esterni
+noti; resta obbligatorio completare i gate operativi prima del deploy.
 
 L'architettura segue la pipeline completa dell'assistente:
 

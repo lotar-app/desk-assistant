@@ -92,8 +92,10 @@ part of activation.
 
 ## Rollout
 
-Mixed-layout parsing is locally supported, but production remains NO-GO. Live
-pivots and external consumers are still UNKNOWN. The global canonical writer
-for Project, Task, memory, or `updateDesk` is not authorized. Activation may
-introduce canonical rows only for ProjectActivity after those remaining checks
-and the normal gates. Never rewrite historical Timeline rows automatically.
+Mixed-layout parsing is locally supported. On 2026-09-04 Max manually verified
+all live sheets and found no pivot, and confirmed no known external Desk or
+Timeline consumer. The transitional production architecture is therefore GO,
+subject to the remaining operational gates. The global canonical writer for
+Project, Task, memory, or `updateDesk` remains unauthorized: activation may
+introduce canonical rows only for ProjectActivity. Never rewrite historical
+Timeline rows automatically.
