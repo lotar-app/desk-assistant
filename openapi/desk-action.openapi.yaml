@@ -235,6 +235,118 @@ paths:
                           error:
                             type: string
                             const: PROJECT_NOT_FOUND
+  /project-activity:
+    post:
+      operationId: getProjectActivity
+      x-openai-isConsequential: false
+      summary: Read a consolidated ProjectActivity snapshot
+      description: >
+        Resolves a project activity by direct ID or exact normalized alias and
+        returns its current D1 snapshot. It never reads Timeline, creates data,
+        or performs fuzzy or semantic search. A global ambiguous alias returns
+        AMBIGUOUS_ACTIVITY with minimal candidates.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - action
+              anyOf:
+                - required: [activityId]
+                - required: [activity]
+              properties:
+                action:
+                  type: string
+                  const: getProjectActivity
+                projectId:
+                  type: string
+                projectName:
+                  type: string
+                activityId:
+                  type: string
+                activity:
+                  type: string
+                  description: Exact canonical name or alias after normalization.
+                mode:
+                  type: string
+                  enum: [COMPACT, FULL, KEYS]
+                  default: COMPACT
+                keys:
+                  type: array
+                  minItems: 1
+                  uniqueItems: true
+                  items:
+                    type: string
+                    minLength: 1
+                  description: Required only in KEYS mode.
+      responses:
+        "200":
+          description: Current ProjectActivity snapshot without Timeline or revisions
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                  - activityId
+                  - projectId
+                  - canonicalName
+                  - schemaVersion
+                  - snapshotVersion
+                  - mode
+                  - activity
+                additionalProperties: true
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  activityId:
+                    type: string
+                  projectId:
+                    type: string
+                  canonicalName:
+                    type: string
+                  schemaVersion:
+                    type: integer
+                  snapshotVersion:
+                    type: integer
+                  mode:
+                    type: string
+                    enum: [COMPACT, FULL, KEYS]
+                  activity:
+                    type: object
+                    additionalProperties: true
+                  items:
+                    type: object
+                    additionalProperties: true
+                  decisionsApproved:
+                    type: object
+                    additionalProperties: true
+                  technicalContext:
+                    type: object
+                    additionalProperties: true
+                  technicalContextIndex:
+                    type: object
+                    additionalProperties: true
+                  contentsApproved:
+                    type: object
+                    additionalProperties: true
+                  approvedContentIndex:
+                    type: object
+                    additionalProperties: true
+        "400":
+          description: INVALID_MODE or INVALID_KEYS
+        "404":
+          description: PROJECT_NOT_FOUND or ACTIVITY_NOT_FOUND
+        "409":
+          description: AMBIGUOUS_ACTIVITY with candidate project and activity IDs
+        "500":
+          description: INTERNAL_ERROR
+        "503":
+          description: D1_NOT_CONFIGURED
   /workspace-briefing:
     post:
       operationId: getWorkspaceBriefing

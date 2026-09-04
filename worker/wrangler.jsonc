@@ -10,4 +10,15 @@
       "enabled": true
     }
   }
+
+  // Enable only after `wrangler d1 create desk-projectactivity` returns the
+  // real database ID. Until then getProjectActivity returns D1_NOT_CONFIGURED.
+  // ,"d1_databases": [
+  //   {
+  //     "binding": "DB",
+  //     "database_name": "desk-projectactivity",
+  //     "database_id": "PASTE_THE_CREATED_DATABASE_ID_HERE",
+  //     "migrations_dir": "migrations"
+  //   }
+  // ]
 }

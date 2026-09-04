@@ -1,3 +1,7 @@
+import { ProjectActivityRepository } from "./project-activity/repository.mjs";
+import { ProjectActivityService } from "./project-activity/service.mjs";
+import { ProjectActivityError, activityError } from "./project-activity/errors.mjs";
+
 export default {
   async fetch(request, env) {
     const headers = {
@@ -35,6 +39,11 @@ export default {
 
     try {
       const url = new URL(request.url);
+
+      if (url.pathname === "/project-activity") {
+        const body = await request.json();
+        return getProjectActivity(body, env, headers);
+      }
 
       if (url.pathname === "/workspace-briefing") {
         const body = await request.json();
@@ -206,6 +215,48 @@ export default {
     }
   }
 };
+
+async function getProjectActivity(body, env, headers) {
+  try {
+    if (!env.DB || typeof env.DB.prepare !== "function") {
+      throw activityError("D1_NOT_CONFIGURED");
+    }
+    const repository = new ProjectActivityRepository(env.DB);
+    const service = new ProjectActivityService(repository, {
+      resolveProjectName: name => resolveProjectByName(name, env)
+    });
+    return json(await service.get(body), 200, headers);
+  } catch (error) {
+    const known = error instanceof ProjectActivityError;
+    const normalized = known ? error : activityError("INTERNAL_ERROR");
+    return json({
+      success: false,
+      error: {
+        code: normalized.code,
+        message: normalized.message,
+        ...(normalized.details ? { details: normalized.details } : {})
+      }
+    }, normalized.status, headers);
+  }
+}
+
+async function resolveProjectByName(projectName, env) {
+  const response = await fetch(env.DESK_APPS_SCRIPT_URL, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify({
+      token: env.DESK_API_TOKEN,
+      action: "getProject",
+      projectName
+    })
+  });
+  if (!response.ok) throw activityError("PROJECT_NOT_FOUND");
+  const result = await response.json();
+  if (!result || result.success !== true || !result.project) {
+    throw activityError("PROJECT_NOT_FOUND");
+  }
+  return result.project;
+}
 
 function json(payload, status, headers) {
   return new Response(
