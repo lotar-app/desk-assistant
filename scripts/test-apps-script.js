@@ -8,10 +8,13 @@ const files = [
   "MigrationDataSource.js", "BaselineValidator.js", "DryRunEngine.js",
   "MigrationPreflightValidator.js", "MigrationSafetyGuard.js", "BackupEngine.js",
   "MigrationWriter.js", "RollbackEngine.js", "MigrationExecutor.js",
-  "TimelineRepository.js", "TimelineService.js",
+  "TimelineRepository.js", "ProjectActivityTimelineDeliveryRepository.js",
+  "TimelineService.js", "ProjectService.js", "TaskService.js", "MemoryUpdate.js",
+  "DeskEngine.js",
   "TimelineEventIdMigration.js", "TestMigrationExecution.js",
-  "TimelineEventIdMigrationAdmin.js", "TestProjectActivityOutbox.js",
-  "TestTimelineEventIdMigrationAdmin.js"
+  "TimelineEventIdMigrationAdmin.js", "ProjectActivityTimelineDeliveryMigration.js",
+  "ProjectActivityTimelineDeliveryMigrationAdmin.js", "TestProjectActivityOutbox.js",
+  "TestProjectActivityTimelineDeliveryMigration.js", "TestTimelineCanonicalModel.js"
 ];
 
 const context = vm.createContext({
@@ -34,6 +37,10 @@ for (const file of files) {
 
 const sink = vm.runInContext("testProjectActivityTimelineSink()", context);
 const migration = vm.runInContext("testProjectActivityTimelineEventIdMigration()", context);
-const migrationAdmin = vm.runInContext("testTimelineEventIdMigrationAdmin()", context);
-if (!sink.success || !migration.success || !migrationAdmin.success) process.exitCode = 1;
-else console.log("Apps Script ProjectActivity 3A tests: PASS");
+const registryMigration = vm.runInContext(
+  "testProjectActivityTimelineDeliveryMigration()", context
+);
+const canonical = vm.runInContext("testTimelineCanonicalModel()", context);
+if (!sink.success || !migration.success || !registryMigration.success || !canonical.success) {
+  process.exitCode = 1;
+} else console.log("Apps Script ProjectActivity canonical Timeline tests: PASS");

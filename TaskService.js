@@ -55,7 +55,8 @@ const TaskService = {
     addTimeline(
       projectId,
       "TASK_CREATED",
-      "Creata attività: " + title
+      "Creata attività: " + title,
+      { id: id, taskId: id, author: "SYSTEM" }
     );
 
     return id;
@@ -149,7 +150,8 @@ const TaskService = {
     addTimeline(
       task.projectId,
       "TASK_COMPLETED",
-      "Completata attività: " + task.title
+      "Completata attività: " + task.title,
+      { id: id, taskId: id, author: "SYSTEM" }
     );
 
     return completedTask;

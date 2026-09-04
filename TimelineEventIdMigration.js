@@ -1,9 +1,16 @@
 const TimelineEventIdMigration = {
   MIGRATION_ID: "TIMELINE_EVENT_ID_V1",
+  SUPERSEDED_BY: "PROJECT_ACTIVITY_TIMELINE_DELIVERY_V1",
   MIGRATION_TYPE: "STRUCTURAL",
   EXECUTION_MODE: "EXECUTION_APPROVED",
 
   createManifest(dataSource) {
+    throw new Error(
+      "TIMELINE_EVENT_ID_V1_SUPERSEDED: usare il registro tecnico separato."
+    );
+  },
+
+  createHistoricalManifest(dataSource) {
     dataSource = dataSource || MigrationDataSource.forSpreadsheet(
       SpreadsheetApp.getActiveSpreadsheet()
     );

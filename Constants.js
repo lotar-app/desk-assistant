@@ -37,6 +37,15 @@ const TIMELINE_HEADERS = [
   "Descrizione"
 ];
 
+const TIMELINE_CANONICAL_HEADERS = [
+  "ID", "Project ID", "TaskID", "Timestamp",
+  "EventType", "Description", "Author"
+];
+
+const PROJECT_ACTIVITY_TIMELINE_DELIVERY_HEADERS = [
+  "EventId", "ProjectId", "Fingerprint", "TimelineRow", "CreatedAt", "Status"
+];
+
 const TASK_HEADERS = [
   "ID",
   "ProjectID",

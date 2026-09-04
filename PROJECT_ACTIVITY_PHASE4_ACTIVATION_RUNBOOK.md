@@ -30,6 +30,7 @@ Prima del GO verificare manualmente:
 - URL e deployment/versione Apps Script attivi;
 - corrispondenza del token Worker/Apps Script senza mostrarlo;
 - intestazioni e numero righe reali di Timeline e stato MigrationLog;
+- consumer esterni della Timeline e compatibilità con righe canoniche miste;
 - OpenAPI e istruzioni effettivamente salvate nel Custom GPT;
 - commit realmente pubblicato in ciascun componente.
 
@@ -38,10 +39,7 @@ Prima del GO verificare manualmente:
 I blocchi seguenti sono stati implementati in Fase 4A e devono essere verificati
 dal checker e dalla review prima del GO:
 
-1. entrypoint amministrativi dedicati per `TimelineEventIdMigration`, con
-   preflight, backup logico, dry-run, backup fisico, conferma forte, esecuzione
-   `EXECUTION_APPROVED` e rollback. Oggi esiste solo `createManifest()` e il
-   guard rifiuterebbe `mode: STRUCTURAL`;
+1. entrypoint amministrativi per la migration del registro delivery separato;
 2. un trigger Worker autenticato e limitato per invocare
    `deliverOutboxEvent`/`deliverPendingOutbox`. Le primitive non sono oggi
    raggiungibili nel Worker deployato e non esiste scheduler;
@@ -61,20 +59,18 @@ La sequenza più sicura è:
 
 1. hardening locale e merge della release approvata;
 2. creazione e migrazione D1, ancora non raggiungibile dal Worker attivo;
-3. caricamento/versionamento/deploy Apps Script compatibile;
-4. migrazione append-only Timeline `EventId`;
-5. deploy Worker con binding e autenticazione;
-6. smoke test tecnico;
-7. aggiornamento OpenAPI/Actions;
-8. aggiornamento istruzioni GPT e test manuali.
+3. caricamento/versionamento/deploy Apps Script backward-compatible;
+4. creazione del foglio tecnico `ProjectActivityTimelineDelivery`;
+5. verifica dei consumer e smoke del writer canonico a sette colonne;
+6. deploy Worker con binding e autenticazione;
+7. smoke test tecnico;
+8. aggiornamento OpenAPI/Actions;
+9. aggiornamento istruzioni GPT e test manuali.
 
 Non scegliere A: D1 mancherebbe quando il GPT o Worker iniziano a scrivere. Non
-scegliere B alla lettera: pubblicare il Worker prima che sink e Timeline siano
-pronti rende la delivery fallibile. La sequenza proposta sfrutta due proprietà
-del codice: D1 è inerte finché non è bindato e la quinta colonna Timeline è
-retrocompatibile con il vecchio codice a quattro colonne. Apps Script può
-essere pubblicato prima della colonna perché il vecchio Worker non invoca il
-nuovo sink; la finestra termina applicando subito la migrazione prima del Worker.
+scegliere B alla lettera: pubblicare il Worker prima che sink e registro siano
+pronti rende la delivery fallibile. D1 resta inerte finché non è bindato. Non è
+prevista alcuna riscrittura dello storico né una colonna EventId in Timeline.
 
 ## Runbook eseguibile
 
@@ -197,9 +193,9 @@ correggere con una nuova migrazione forward, mai riscrivere 0001–0003.
 del release commit; `.claspignore` verificato; token iniettato solo nella copia
 temporanea e confrontato senza output.
 
-File funzionali nuovi/aggiornati necessari: `Api.js`,
-`TimelineRepository.js`, `TimelineService.js`, `TimelineEventIdMigration.js` e
-le dipendenze già presenti del framework. Poiché `clasp push` sostituisce tutto
+File funzionali nuovi/aggiornati necessari: `Api.js`, `TimelineRepository.js`,
+`TimelineService.js`, `ProjectActivityTimelineDeliveryRepository.js`, migration
+e admin del registro, più le dipendenze già presenti del framework. Poiché `clasp push` sostituisce tutto
 il progetto remoto, caricare l'intero set filtrato, non singoli file.
 
 ```bash
@@ -217,34 +213,37 @@ accesso Anyone. Non usare `clasp deploy`/`redeploy`. Atteso: GET `/exec` =
 l'URL cambia, l'auth fallisce o un read regredisce. Rollback: riassegnare lo
 stesso deployment alla versione Apps Script precedente annotata.
 
-### 5. Migrare Timeline EventId — MUTATIVO
+### 5. Creare il registro delivery — MUTATIVO
 
-**Prerequisiti:** entrypoint admin hardenizzati, intestazioni esatte `Data`,
-`Project ID`, `Tipo`, `Descrizione`, MigrationLog coerente, nessuna scrittura
-concorrente, autorizzazione e backup fisico verificato.
+**Prerequisiti:** backup Spreadsheet verificato, entrypoint admin pubblicati,
+registro assente, MigrationLog coerente e autorizzazione esplicita.
 
 Ordine nell'editor/admin Apps Script:
 
-1. eseguire il preflight read-only e registrare record count/header;
-2. costruire il manifest e dry-run; richiedere baseline valida e una sola
-   `ADD_COLUMN`, header `EventId`, posizione 5;
+1. eseguire `projectActivityTimelineDeliveryMigrationPreflight`;
+2. eseguire il dry-run; richiedere una sola `CREATE_SHEET`;
 3. creare backup logico e `BackupEngine.createPhysical`, verificando checksum,
    spreadsheet source ID e copia;
-4. presentare checksum, firma, backup ID e frase `APPLY TIMELINE_EVENT_ID_V1`;
+4. presentare checksum, firma, backup ID e frase
+   `APPLY PROJECT_ACTIVITY_TIMELINE_DELIVERY_V1`;
 5. solo dopo conferma separata, eseguire tramite `MigrationExecutor` con
    manifest `EXECUTION_APPROVED`;
-6. verificare MigrationLog `COMPLETED`, cinque header, stesso numero di righe,
-   vecchie colonne invariate ed `EventId` vuoto per le righe storiche.
+6. verificare MigrationLog `COMPLETED`, header del registro esatti e zero righe
+   delivery. Timeline e storico devono essere invariati.
 
-**STOP** se lo schema non è esattamente legacy, il backup non coincide, il
-foglio cambia dopo il dry-run o esiste già un log. Rollback: usare il piano del
-framework per `DELETE_COLUMN` solo se `EventId` è ancora interamente vuoto e gli
-header coincidono; dopo la prima delivery non cancellare la colonna. In quel
-caso mantenere la colonna e disattivare il caller Worker.
+**STOP** se il backup non coincide, il foglio compare dopo il dry-run o esiste
+già un log. Rollback: eliminare il solo foglio tecnico tramite framework
+esclusivamente se non contiene righe; dopo la prima delivery mantenerlo e
+disattivare il caller Worker.
+
+Prima di attivare i writer canonici per Project, Task e memory event verificare
+gli eventuali consumer esterni della Timeline. Il parser accetta righe legacy e
+canoniche, ma un consumer esterno potrebbe non farlo. Nessuna riscrittura
+storica è autorizzata.
 
 ### 6. Preparare e pubblicare Worker — MUTATIVO
 
-**Prerequisiti:** D1 verificato; Timeline migrata; sink Apps Script attivo;
+**Prerequisiti:** D1 verificato; registro delivery creato; sink Apps Script attivo;
 secrets configurati senza output; autenticazione inbound testata.
 
 Prima del deploy verificare il comportamento attuale senza binding sulla
@@ -286,7 +285,7 @@ persistente e deve essere accettata prima del test.
 7. invocare il trigger admin per `eventId` e verificare attempts 1,
    `delivered_at` valorizzato, `last_error` null;
 8. ripetere delivery → nessuna chiamata/scrittura aggiuntiva e una sola riga
-   Timeline con lo stesso EventId;
+   Timeline; l'EventId resta nel registro tecnico, non in Timeline.ID;
 9. verificare descrizione leggibile e assenza di payload JSON nel foglio.
 
 Usare richieste salvate in file temporanei con permessi 0600 oppure client che
@@ -336,9 +335,10 @@ GO soltanto con tutte le caselle:
 - [ ] test ProjectActivity, Apps Script e GPT tutti verdi;
 - [ ] produzione inventariata, version ID/deployment ID precedenti annotati;
 - [ ] autenticazione inbound e admin implementata e testata;
-- [ ] entrypoint migrazione Timeline sicuri e revisionati;
+- [ ] entrypoint migration registro delivery sicuri e revisionati;
 - [ ] backup Timeline fisico verificato;
-- [ ] schema pre-check Timeline esatto;
+- [ ] schema Timeline reale e consumer esterni verificati;
+- [ ] registro `ProjectActivityTimelineDelivery` creato e vuoto al post-check;
 - [ ] D1 creato con ID reale e binding `DB` corretto;
 - [ ] migrazioni 0001/0002/0003 e indici verificati;
 - [ ] secrets Worker presenti e allineati senza esposizione;

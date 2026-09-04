@@ -77,7 +77,7 @@ consegnata. Il write contract è in
 [`PROJECT_ACTIVITY_PHASE2.md`](PROJECT_ACTIVITY_PHASE2.md).
 
 La Fase 3A aggiunge la delivery affidabile dell'outbox verso Timeline, con
-sink Apps Script idempotente basato su `EventId`. Flusso, migrazioni e retry
+sink Apps Script idempotente basato su un registro tecnico separato. Flusso e retry
 sono documentati in
 [`PROJECT_ACTIVITY_PHASE3A.md`](PROJECT_ACTIVITY_PHASE3A.md).
 
@@ -92,6 +92,10 @@ chiusura dei prerequisiti di hardening, è in
 L'hardening pre-attivazione di autenticazione, route admin, migrazione Timeline
 e release checks è documentato in
 [`PROJECT_ACTIVITY_PHASE4A_HARDENING.md`](PROJECT_ACTIVITY_PHASE4A_HARDENING.md).
+
+La correzione dello schema Timeline, il parser backward-compatible e il
+registro delivery sono descritti in
+[`PROJECT_ACTIVITY_TIMELINE_CANONICALIZATION.md`](PROJECT_ACTIVITY_TIMELINE_CANONICALIZATION.md).
 
 L'architettura segue la pipeline completa dell'assistente:
 

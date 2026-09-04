@@ -29,7 +29,9 @@ for file in \
   worker/migrations/0001_project_activity_foundation.sql \
   worker/migrations/0002_project_activity_write_path.sql \
   worker/migrations/0003_project_activity_outbox_delivery.sql \
-  TimelineEventIdMigration.js TimelineEventIdMigrationAdmin.js \
+  TimelineEventIdMigration.js ProjectActivityTimelineDeliveryRepository.js \
+  ProjectActivityTimelineDeliveryMigration.js \
+  ProjectActivityTimelineDeliveryMigrationAdmin.js \
   openapi/desk-action.openapi.yaml gpt/DESK_ASSISTANT_INSTRUCTIONS.md; do
   git -C "$REPO_ROOT" cat-file -e "$EXPECTED_COMMIT:$file" || fail "missing $file"
 done

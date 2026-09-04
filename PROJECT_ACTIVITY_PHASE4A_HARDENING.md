@@ -27,30 +27,26 @@ Non espongono `payload_json`. Il batch pending conserva l'ordine deterministico
 del repository. Queste route servono a smoke test e retry manuali; non
 introducono scheduler né delivery automatica in `updateProjectActivity`.
 
-## Timeline migration admin
+## Timeline migration correction
 
-`TimelineEventIdMigration` distingue `migrationType: STRUCTURAL` da
-`mode: EXECUTION_APPROVED`. `MigrationSafetyGuard` non è stato modificato o
-reso permissivo. L'approvazione riguarda soltanto la migration deterministica
-`TIMELINE_EVENT_ID_V1`, il cui unico statement concettuale è `ADD_COLUMN` in
-posizione 5.
+Il preflight reale ha invalidato `TIMELINE_EVENT_ID_V1`: la migration è ora
+superseded e il suo entrypoint manifesto fallisce sempre. Non aggiungere
+`EventId` alla Timeline. `PROJECT_ACTIVITY_TIMELINE_DELIVERY_V1` crea invece un
+foglio tecnico separato, mantenendo `MigrationSafetyGuard` invariato.
 
-Entry point Apps Script:
+I nuovi entrypoint Apps Script sono:
 
-- `timelineEventIdMigrationPreflight()`;
-- `timelineEventIdMigrationDryRun()`;
-- `timelineEventIdMigrationCreatePhysicalBackup(folderId)`;
-- `timelineEventIdMigrationApply(confirmation, physicalBackup)`;
-- `timelineEventIdMigrationPostCheck(expectedRecordCount)`;
-- `timelineEventIdMigrationPrepareRollback()`;
-- `timelineEventIdMigrationRollback(plan, confirmation, physicalBackup)`.
+- `projectActivityTimelineDeliveryMigrationPreflight()`;
+- `projectActivityTimelineDeliveryMigrationDryRun()`;
+- `projectActivityTimelineDeliveryMigrationCreatePhysicalBackup(folderId)`;
+- `projectActivityTimelineDeliveryMigrationApply(confirmation, physicalBackup)`;
+- `projectActivityTimelineDeliveryMigrationPostCheck()`;
+- `projectActivityTimelineDeliveryMigrationPrepareRollback()`.
 
-Apply richiede esattamente `APPLY TIMELINE_EVENT_ID_V1`, oltre a confirmed,
-migration ID, checksum, signature e backup checksum coerenti col framework.
-Una seconda applicazione si ferma sullo schema non legacy e sul MigrationLog.
-Il rollback richiede `ROLLBACK TIMELINE_EVENT_ID_V1` ed è preparabile/eseguibile
-solo se lo schema è esattamente quello atteso e ogni cella EventId è vuota. Una
-sola cella valorizzata produce `TIMELINE_EVENT_ID_ROLLBACK_NOT_SAFE`.
+Apply richiede esattamente
+`APPLY PROJECT_ACTIVITY_TIMELINE_DELIVERY_V1`. Il rollback strutturale è
+consentito soltanto finché il registro è vuoto; dopo una delivery il foglio va
+preservato.
 
 ## Release check
 

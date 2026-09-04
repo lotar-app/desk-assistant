@@ -359,7 +359,8 @@ const DeskEngine = {
       addTimeline(
         projectId,
         this.toTimelineType(memoryUpdate.timelineEvent),
-        this.toTimelineText(memoryUpdate.timelineEvent)
+        this.toTimelineText(memoryUpdate.timelineEvent),
+        { author: "CUSTOM_GPT" }
       );
     }
 

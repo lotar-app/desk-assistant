@@ -11,7 +11,7 @@ delivery from `updateProjectActivity`.
 3. The Worker sends the event to Apps Script using the existing JSON-body
    `DESK_API_TOKEN` authentication.
 4. Apps Script validates the Project, locks the Spreadsheet, and performs an
-   EventId lookup followed by at most one append.
+   EventId lookup in the separate delivery registry.
 5. A newly created row and an idempotent replay are both delivery success.
 6. Only an unambiguous success sets `delivered_at`; every failed HTTP attempt
    increments `attempts` and records a sanitized `last_error`.
@@ -24,23 +24,21 @@ not listed in the Custom GPT OpenAPI. Its required fields are `eventId`,
 
 ## Sink idempotency and response loss
 
-The Sheets migration `TIMELINE_EVENT_ID_V1` appends the nullable `EventId`
-column at position 5. Historical rows remain unchanged and readable. The
-migration must pass the existing backup, baseline, dry-run, confirmation, lock,
-and migration-log workflow before it is ever applied.
+The original `TIMELINE_EVENT_ID_V1` design was superseded after production was
+found to use seven headers over legacy four-value rows. Idempotency now lives in
+the separate `ProjectActivityTimelineDelivery` technical sheet. Timeline.ID is
+the logical entity ID and never the D1 outbox event ID.
 
-For a new EventId the sink appends `createdAt`, `projectId`, `eventType`, the
-human-readable `description`, and `eventId`. The complete payload remains in
-D1 and is not dumped into Timeline. A repeated EventId with the same persisted
-Timeline content returns `{ created: false, idempotentReplay: true }`. A
-different Project, type, or description returns `TIMELINE_EVENT_CONFLICT` and
-does not append.
+For a new EventId the sink first records a fingerprinted `PENDING` intent, then
+appends a canonical seven-field Timeline row, then records its row number as
+`DELIVERED`. The complete payload remains in D1. A repeated EventId with the
+same fingerprint returns idempotent success; a different fingerprint returns
+`TIMELINE_EVENT_CONFLICT`.
 
-The Apps Script document lock serializes lookup plus append. Therefore two
-Worker executions may issue concurrent HTTP requests, but only one Timeline
-row is created. This also covers a successful append followed by a lost HTTP
-response: the retry receives an idempotent success and the Worker can safely
-mark the D1 row delivered.
+The DocumentLock serializes registry and Timeline writes. Sheets is not
+transactional: if Timeline append succeeds but the final registry update fails,
+retry reconciles an exact canonical fingerprint before deciding whether to
+append. Multiple matches fail closed instead of guessing.
 
 ## D1 state and retry semantics
 

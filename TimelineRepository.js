@@ -12,27 +12,32 @@ const TimelineRepository = {
 
   append(data) {
     if (this.sheet().getLastRow() === 0) {
-      this.sheet().appendRow(TIMELINE_HEADERS);
+      this.sheet().appendRow(TIMELINE_CANONICAL_HEADERS);
     }
 
     this.sheet().appendRow(data);
+    return this.sheet().getLastRow();
   },
 
-  findByEventId(eventId) {
-    const target = String(eventId || "").trim();
-    if (!target) return null;
-    const values = this.sheet().getDataRange().getValues();
-    if (!values.length) return null;
-    const eventIdIndex = values[0].indexOf("EventId");
-    if (eventIdIndex === -1) {
-      throw new Error("TIMELINE_EVENT_ID_SCHEMA_MISSING");
+  appendEvent(event) {
+    return this.append([
+      String(event.id || ""), String(event.projectId || ""),
+      String(event.taskId || ""), event.timestamp,
+      String(event.eventType || ""), String(event.description || ""),
+      String(event.author || "SYSTEM")
+    ]);
+  },
+
+  nextRowNumber() {
+    return this.sheet().getLastRow() + 1;
+  },
+
+  getEventAtRow(rowNumber) {
+    const row = Number(rowNumber);
+    if (!Number.isInteger(row) || row < 2 || row > this.sheet().getLastRow()) {
+      return null;
     }
-    for (let index = 1; index < values.length; index++) {
-      if (String(values[index][eventIdIndex] || "").trim() === target) {
-        return this.fromRow(values[index]);
-      }
-    }
-    return null;
+    return this.fromRow(this.sheet().getRange(row, 1, 1, 7).getValues()[0]);
   },
 
   list() {
@@ -63,15 +68,24 @@ const TimelineRepository = {
   },
 
   fromRow(row) {
-
+    const canonical = row.length >= 7 && (
+      String(row[4] || "").trim() !== "" ||
+      String(row[5] || "").trim() !== "" ||
+      String(row[6] || "").trim() !== ""
+    );
+    if (canonical) {
+      return {
+        id: row[0] || "", projectId: row[1] || "", taskId: row[2] || "",
+        date: row[3], timestamp: row[3], type: row[4] || "",
+        eventType: row[4] || "", description: row[5] || "",
+        author: row[6] || "", layout: "CANONICAL_V1"
+      };
+    }
     return {
-      date: row[0],
-      projectId: row[1],
-      type: row[2],
-      description: row[3],
-      eventId: row[4] || null
+      id: "", projectId: row[1] || "", taskId: "", date: row[0],
+      timestamp: row[0], type: row[2] || "", eventType: row[2] || "",
+      description: row[3] || "", author: "", layout: "LEGACY_V0"
     };
-
   }
 
 };

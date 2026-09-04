@@ -25,7 +25,8 @@ const ProjectService = {
     addTimeline(
       id,
       "PROJECT_CREATED",
-      "Progetto creato"
+      "Progetto creato",
+      { id: id, author: "SYSTEM" }
     );
 
     return id;
@@ -123,7 +124,8 @@ const ProjectService = {
       addTimeline(
         id,
         "PROJECT_UPDATED",
-        updateText
+        updateText,
+        { id: id, author: "SYSTEM" }
       );
     }
 

@@ -8,6 +8,7 @@ const CONFIG = {
     PROJECTS: "Projects",
     TASKS: "Tasks",
     TIMELINE: "Timeline",
+    PROJECT_ACTIVITY_TIMELINE_DELIVERY: "ProjectActivityTimelineDelivery",
     SETTINGS: "Settings",
     WORKSPACES: "Workspaces",
     WORKSPACE_ALIASES: "WorkspaceAliases",
