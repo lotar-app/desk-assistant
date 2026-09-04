@@ -21,6 +21,18 @@ Se il runbook e lo stato reale dell'infrastruttura non coincidono, fermarsi,
 segnalare la differenza e chiedere conferma prima di modificare deployment,
 URL o credenziali.
 
+## Memoria ProjectActivity
+
+Quando viene citata un'attività o campagna nominata, usare lo snapshot
+ProjectActivity come percorso ordinario di recupero prima di Project e Task;
+non scansionare Timeline. Scrivere `updateProjectActivity` solo per decisioni,
+contenuti o configurazioni esplicitamente approvati, mai per brainstorming,
+ipotesi o proposte dell'assistente. Per attività esistenti leggere prima la
+snapshot version corrente. In caso di conflitto rileggere e non sovrascrivere
+alla cieca. `updateDesk` resta responsabile di progresso generale del Project,
+focus, next action e Task. Le regole complete sono in
+`gpt/DESK_ASSISTANT_INSTRUCTIONS.md` e `PROJECT_ACTIVITY_PHASE3B.md`.
+
 ## Gestione delle scadenze
 
 Salvo diversa indicazione esplicita dell'utente, applicare sempre questa

@@ -81,6 +81,10 @@ sink Apps Script idempotente basato su `EventId`. Flusso, migrazioni e retry
 sono documentati in
 [`PROJECT_ACTIVITY_PHASE3A.md`](PROJECT_ACTIVITY_PHASE3A.md).
 
+La Fase 3B definisce il comportamento di recupero e consolidamento automatico
+del Desk Assistant, senza attivare il runtime reale. Policy e limiti sono in
+[`PROJECT_ACTIVITY_PHASE3B.md`](PROJECT_ACTIVITY_PHASE3B.md).
+
 L'architettura segue la pipeline completa dell'assistente:
 
 ```text
