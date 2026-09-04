@@ -40,6 +40,8 @@ I nuovi entrypoint Apps Script sono:
 - `projectActivityTimelineDeliveryMigrationDryRun()`;
 - `projectActivityTimelineDeliveryMigrationCreatePhysicalBackup(folderId)`;
 - `projectActivityTimelineDeliveryMigrationApply(confirmation, physicalBackup)`;
+- `projectActivityTimelineDeliveryMigrationApplyApproved()` per l'esecuzione
+  manuale senza argomenti, dopo la registrazione di un unico backup verificato;
 - `projectActivityTimelineDeliveryMigrationPostCheck()`;
 - `projectActivityTimelineDeliveryMigrationPrepareRollback()`.
 
@@ -47,6 +49,12 @@ Apply richiede esattamente
 `APPLY PROJECT_ACTIVITY_TIMELINE_DELIVERY_V1`. Il rollback strutturale è
 consentito soltanto finché il registro è vuoto; dopo una delivery il foglio va
 preservato.
+
+Il backup fisico crea una copia Spreadsheet e un XLSX verificati e salva un
+receipt tecnico in `DocumentProperties`. L'adapter approvato fallisce chiuso se
+il receipt manca, è ambiguo, appartiene a un'altra migration o Spreadsheet, se
+i file non sono più verificabili o se un checksum non coincide. Non modifica
+`MigrationSafetyGuard` e non esegue nulla al caricamento del codice.
 
 ## Release check
 

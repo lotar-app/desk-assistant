@@ -235,11 +235,20 @@ Ordine nell'editor/admin Apps Script:
 1. eseguire `projectActivityTimelineDeliveryMigrationPreflight`;
 2. eseguire il dry-run; richiedere una sola `CREATE_SHEET`;
 3. creare backup logico e `BackupEngine.createPhysical`, verificando checksum,
-   spreadsheet source ID e copia;
+   spreadsheet source ID e copia. L'entrypoint
+   `projectActivityTimelineDeliveryMigrationCreatePhysicalBackup` registra in
+   `DocumentProperties` un solo receipt tecnico per migration, dopo la verifica
+   del backup. Un backup creato da una versione precedente priva del receipt
+   non è selezionabile automaticamente e deve essere ricreato dopo il deploy
+   dell'adapter amministrativo;
 4. presentare checksum, firma, backup ID e frase
    `APPLY PROJECT_ACTIVITY_TIMELINE_DELIVERY_V1`;
-5. solo dopo conferma separata, eseguire tramite `MigrationExecutor` con
-   manifest `EXECUTION_APPROVED`;
+5. solo dopo conferma separata, eseguire dall'editor l'entrypoint senza
+   argomenti `projectActivityTimelineDeliveryMigrationApplyApproved`. Il
+   wrapper richiede esattamente un receipt, verifica nuovamente migration ID,
+   source Spreadsheet, checksum, copia Spreadsheet e XLSX, costruisce la
+   confirmation completa con la phrase esatta e delega alla funzione core e a
+   `MigrationExecutor` con manifest `EXECUTION_APPROVED`;
 6. verificare MigrationLog `COMPLETED`, header del registro esatti e zero righe
    delivery. Timeline e storico devono essere invariati.
 
@@ -247,6 +256,10 @@ Ordine nell'editor/admin Apps Script:
 già un log. Rollback: eliminare il solo foglio tecnico tramite framework
 esclusivamente se non contiene righe; dopo la prima delivery mantenerlo e
 disattivare il caller Worker.
+
+L'entrypoint di apply scrive nel log di esecuzione soltanto un report tecnico
+con migration ID, outcome, operation ID e stato/header del registry; non
+include receipt, checksum, ID dei file di backup, token o payload applicativi.
 
 La release transizionale mantiene Project, Task, memory event e `updateDesk`
 sul writer legacy a quattro valori. Solo ProjectActivity usa il writer canonico
