@@ -11,7 +11,7 @@ export class OutboxDeliveryError extends Error {
 export class ProjectActivityOutboxDeliveryService {
   constructor(repository, options = {}) {
     this.repository = repository;
-    this.fetch = options.fetch || globalThis.fetch;
+    this.fetch = options.fetch || ((...args) => globalThis.fetch(...args));
     this.appsScriptUrl = options.appsScriptUrl;
     this.token = options.token;
     this.now = options.now || (() => new Date().toISOString());

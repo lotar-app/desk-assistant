@@ -77,6 +77,44 @@ test("prima delivery crea sink row e marca delivered con attempts 1", async () =
   assert.equal(repo.events.get("EVT-1").last_error, null);
 });
 
+test("fetch nativo conserva il receiver richiesto dal runtime", async () => {
+  const originalFetch = globalThis.fetch;
+  let receiver;
+  globalThis.fetch = async function (_url, request) {
+    receiver = this;
+    const body = JSON.parse(request.body);
+    return Response.json({ success: true, eventId: body.eventId, created: true });
+  };
+  try {
+    const repo = new OutboxRepository();
+    const delivery = new ProjectActivityOutboxDeliveryService(repo, {
+      appsScriptUrl: "https://apps.test/exec", token: "test-only", now: () => NOW
+    });
+    const result = await delivery.deliverOutboxEvent("EVT-1");
+    assert.equal(receiver, globalThis);
+    assert.equal(result.success, true);
+    assert.equal(repo.events.get("EVT-1").delivered_at, NOW);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("fetch iniettato continua a essere usato senza dipendere dal fetch globale", async () => {
+  const repo = new OutboxRepository(); let calls = 0;
+  const injectedFetch = async (_url, request) => {
+    calls++;
+    const body = JSON.parse(request.body);
+    return Response.json({ success: true, eventId: body.eventId, created: true });
+  };
+  const delivery = new ProjectActivityOutboxDeliveryService(repo, {
+    appsScriptUrl: "https://apps.test/exec", token: "test-only",
+    fetch: injectedFetch, now: () => NOW
+  });
+  const result = await delivery.deliverOutboxEvent("EVT-1");
+  assert.equal(calls, 1);
+  assert.equal(result.success, true);
+});
+
 test("response loss e retry producono una sola Timeline row", async () => {
   const repo = new OutboxRepository(); const fake = sink({ loseFirstResponse: true });
   await assert.rejects(service(repo, fake).deliverOutboxEvent("EVT-1"), { code: "APPS_SCRIPT_NETWORK_ERROR" });
