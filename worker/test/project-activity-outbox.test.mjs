@@ -59,10 +59,15 @@ function sink(options = {}) {
   };
 }
 
-const service = (repo, fakeSink) => new ProjectActivityOutboxDeliveryService(repo, {
+const service = (repo, fakeSink, options = {}) => new ProjectActivityOutboxDeliveryService(repo, {
   appsScriptUrl: "https://apps.test/exec", token: "test-only",
-  fetch: fakeSink.fetch.bind(fakeSink), now: () => NOW
+  fetch: fakeSink.fetch.bind(fakeSink), now: () => NOW, ...options
 });
+
+function diagnosticLogger() {
+  const entries = [];
+  return { entries, error(message, metadata) { entries.push({ message, metadata }); } };
+}
 
 test("prima delivery crea sink row e marca delivered con attempts 1", async () => {
   const repo = new OutboxRepository(); const fake = sink();
@@ -81,6 +86,49 @@ test("response loss e retry producono una sola Timeline row", async () => {
   assert.equal(fake.rows.size, 1); assert.equal(retry.idempotentReplay, true);
   assert.equal(repo.events.get("EVT-1").attempts, 2);
   assert.equal(repo.events.get("EVT-1").last_error, null);
+});
+
+test("diagnostica distingue FETCH e non espone secret o URL query", async () => {
+  const repo = new OutboxRepository(); const logger = diagnosticLogger();
+  const fake = { async fetch() {
+    throw new TypeError("fetch failed\n token=test-only https://apps.test/exec?signed=secret");
+  } };
+  await assert.rejects(service(repo, fake, { logger }).deliverOutboxEvent("EVT-1"),
+    { code: "APPS_SCRIPT_NETWORK_ERROR", message: "Apps Script network error" });
+  assert.equal(logger.entries.length, 1);
+  assert.deepEqual(logger.entries[0], { message: "project_activity_outbox_delivery_failure",
+    metadata: { phase: "FETCH", eventId: "EVT-1", eventType: "PROJECT_ACTIVITY_UPDATED",
+      errorName: "TypeError", errorMessage: "fetch failed  token=[REDACTED] https://apps.test",
+      upstreamOrigin: "https://apps.test" } });
+  assert.doesNotMatch(JSON.stringify(logger.entries), /test-only|signed=secret|\/exec/);
+});
+
+test("diagnostica distingue RESPONSE_READ mantenendo INVALID_RESPONSE", async () => {
+  const repo = new OutboxRepository(); const logger = diagnosticLogger();
+  const fake = { async fetch() { return { ok: true, status: 200,
+    url: "https://script.googleusercontent.com/macros/echo?user_content_key=sensitive",
+    async text() { throw new Error("body read failed token=test-only"); } }; } };
+  await assert.rejects(service(repo, fake, { logger }).deliverOutboxEvent("EVT-1"),
+    { code: "APPS_SCRIPT_INVALID_RESPONSE" });
+  assert.equal(logger.entries[0].metadata.phase, "RESPONSE_READ");
+  assert.equal(logger.entries[0].metadata.responseStatus, 200);
+  assert.equal(logger.entries[0].metadata.finalOrigin, "https://script.googleusercontent.com");
+  assert.doesNotMatch(JSON.stringify(logger.entries), /test-only|user_content_key|sensitive/);
+});
+
+test("diagnostica distingue RESPONSE_PARSE senza loggare il body", async () => {
+  const repo = new OutboxRepository(); const logger = diagnosticLogger();
+  const sensitiveBody = "not-json token=test-only payload-fixture-secret";
+  const fake = { async fetch() { return { ok: true, status: 200,
+    url: "https://apps.test/exec?key=sensitive", async text() { return sensitiveBody; } }; } };
+  await assert.rejects(service(repo, fake, { logger }).deliverOutboxEvent("EVT-1"),
+    { code: "APPS_SCRIPT_INVALID_RESPONSE" });
+  assert.equal(logger.entries[0].metadata.phase, "RESPONSE_PARSE");
+  assert.doesNotMatch(JSON.stringify(logger.entries),
+    /not-json|test-only|payload-fixture-secret|key=sensitive/);
+  assert.equal(logger.entries[0].metadata.errorMessage, "Invalid JSON response");
+  assert.equal(repo.events.get("EVT-1").attempts, 1);
+  assert.equal(repo.events.get("EVT-1").delivered_at, null);
 });
 
 test("evento già delivered non richiama Apps Script", async () => {

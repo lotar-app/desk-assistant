@@ -15,6 +15,7 @@ export class ProjectActivityOutboxDeliveryService {
     this.appsScriptUrl = options.appsScriptUrl;
     this.token = options.token;
     this.now = options.now || (() => new Date().toISOString());
+    this.logger = options.logger || console;
   }
 
   async deliverOutboxEvent(eventId) {
@@ -25,21 +26,31 @@ export class ProjectActivityOutboxDeliveryService {
         attempts: Number(event.attempts), deliveredAt: event.delivered_at });
     }
     let sink;
+    let response;
     try {
-      const response = await this.fetch(this.appsScriptUrl, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({
-          token: this.token,
-          action: "appendProjectActivityTimelineEvent",
-          eventId: event.event_id,
-          projectId: event.project_id,
-          activityId: event.activity_id,
-          eventType: event.event_type,
-          description: event.description,
-          createdAt: event.created_at
-        })
-      });
+      try {
+        response = await this.fetch(this.appsScriptUrl, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain;charset=utf-8" },
+          body: JSON.stringify({
+            token: this.token,
+            action: "appendProjectActivityTimelineEvent",
+            eventId: event.event_id,
+            projectId: event.project_id,
+            activityId: event.activity_id,
+            eventType: event.event_type,
+            description: event.description,
+            createdAt: event.created_at
+          })
+        });
+      } catch (error) {
+        logDeliveryDiagnostic(this.logger, "FETCH", error, event, {
+          upstreamUrl: this.appsScriptUrl,
+          secret: this.token
+        });
+        throw new OutboxDeliveryError("APPS_SCRIPT_NETWORK_ERROR",
+          "Apps Script network error", { retryable: true });
+      }
       if (!response.ok) {
         throw new OutboxDeliveryError(
           response.status >= 500 ? "APPS_SCRIPT_TEMPORARY_ERROR" : "APPS_SCRIPT_PERMANENT_ERROR",
@@ -47,9 +58,26 @@ export class ProjectActivityOutboxDeliveryService {
           { retryable: response.status >= 500, status: response.status }
         );
       }
+      let responseText;
       try {
-        sink = await response.json();
-      } catch {
+        responseText = await response.text();
+      } catch (error) {
+        logDeliveryDiagnostic(this.logger, "RESPONSE_READ", error, event, {
+          upstreamUrl: this.appsScriptUrl,
+          response,
+          secret: this.token
+        });
+        throw deliveryError("APPS_SCRIPT_INVALID_RESPONSE");
+      }
+      try {
+        sink = JSON.parse(responseText);
+      } catch (error) {
+        logDeliveryDiagnostic(this.logger, "RESPONSE_PARSE", error, event, {
+          upstreamUrl: this.appsScriptUrl,
+          response,
+          secret: this.token,
+          errorMessage: "Invalid JSON response"
+        });
         throw deliveryError("APPS_SCRIPT_INVALID_RESPONSE");
       }
       if (!sink || sink.success !== true || sink.eventId !== event.event_id ||
@@ -117,6 +145,43 @@ function deliveryError(code) {
 function safeError(error) {
   return JSON.stringify({ code: error.code, message: error.message,
     retryable: error.retryable === true, status: error.status || null }).slice(0, 1000);
+}
+
+function logDeliveryDiagnostic(logger, phase, error, event, context = {}) {
+  if (!logger || typeof logger.error !== "function") return;
+  const metadata = {
+    phase,
+    eventId: event.event_id,
+    eventType: event.event_type,
+    errorName: sanitizeText(error && error.name, context.secret) || "Error",
+    errorMessage: sanitizeText(context.errorMessage || (error && error.message), context.secret) ||
+      "Unexpected error",
+    upstreamOrigin: safeOrigin(context.upstreamUrl)
+  };
+  if (context.response && Number.isInteger(context.response.status)) {
+    metadata.responseStatus = context.response.status;
+  }
+  const finalOrigin = safeOrigin(context.response && context.response.url);
+  if (finalOrigin) metadata.finalOrigin = finalOrigin;
+  logger.error("project_activity_outbox_delivery_failure", metadata);
+}
+
+function sanitizeText(value, secret) {
+  let text = String(value || "").replace(/[\r\n]+/g, " ");
+  if (secret) text = text.split(String(secret)).join("[REDACTED]");
+  text = text
+    .replace(/https?:\/\/[^\s]+/gi, url => safeOrigin(url) || "[REDACTED_URL]")
+    .replace(/\b(authorization|token|password|cookie)\s*[:=]\s*[^\s,;]+/gi, "$1=[REDACTED]");
+  return text.slice(0, 240);
+}
+
+function safeOrigin(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return url.protocol === "https:" || url.protocol === "http:" ? url.origin : null;
+  } catch {
+    return null;
+  }
 }
 
 function deliveryResult(event, extra) {
