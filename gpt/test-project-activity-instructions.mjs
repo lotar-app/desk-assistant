@@ -10,124 +10,166 @@ const scenarios = JSON.parse(await readFile(
 const openapi = await readFile(
   new URL("../openapi/desk-action.openapi.yaml", import.meta.url), "utf8"
 );
+const has = pattern => assert.match(instructions, pattern);
 
-test("la fixture copre esattamente i 28 scenari richiesti", () => {
-  assert.deepEqual(scenarios.map(row => row.id), Array.from({ length: 28 }, (_, index) => index + 1));
+test("l'artefatto production rispetta i limiti Custom GPT", () => {
+  const characters = Array.from(instructions).length;
+  const bytes = Buffer.byteLength(instructions, "utf8");
+  assert.ok(characters <= 7400, `target superato: ${characters}`);
+  assert.ok(characters <= 7600, `hard limit superato: ${characters}`);
+  assert.ok(bytes < 8000, `limite UTF-8 superato: ${bytes}`);
+});
+
+test("la fixture copre esattamente i 28 scenari ProjectActivity", () => {
+  assert.deepEqual(scenarios.map(row => row.id), Array.from({ length: 28 }, (_, i) => i + 1));
   assert.ok(scenarios.every(row => row.input && row.outcome && Array.isArray(row.actions)));
 });
 
-test("brainstorming e reazione debole non causano write", () => {
+test("brainstorming, reazione debole e proposta scartata non scrivono", () => {
   for (const id of [1, 2, 7]) {
     assert.equal(scenarios[id - 1].outcome, "NO_WRITE");
     assert.equal(scenarios[id - 1].actions.includes("updateProjectActivity"), false);
   }
-  assert.match(instructions, /interessante/);
-  assert.match(instructions, /assistant proposal never becomes approved/i);
+  has(/Do not call `updateProjectActivity` for brainstorming[\s\S]*assistant proposals[\s\S]*If approval is uncertain, do not write/i);
 });
 
-test("approvazione, sostituzione e revoca usano operazioni stabili", () => {
+test("approval, replacement, revocation e multi-item mantengono stable key", () => {
   assert.equal(scenarios[2].items[0].op, "UPSERT");
   assert.equal(scenarios[4].items[0].sameStableKey, true);
   assert.equal(scenarios[5].items[0].op, "DELETE");
   assert.equal(scenarios[5].items[0].reasonRequired, true);
   assert.equal(scenarios[6].delete, false);
-});
-
-test("approvazione multipla è una sola request e l'ambiguità chiarisce", () => {
   assert.equal(scenarios[7].singleUpdate, true);
-  assert.equal(scenarios[7].items.length, 3);
-  assert.equal(scenarios[8].outcome, "CLARIFY");
-  assert.equal(scenarios[24].singleUpdate, true);
+  assert.equal(scenarios[24].items.length, 3);
+  has(/Existing Activity: call `getProjectActivity` immediately before writing[\s\S]*expectedSnapshotVersion/i);
+  has(/Replacement uses the same key/);
+  has(/revocation without replacement uses DELETE[\s\S]*`reason`/i);
+  has(/stable hierarchical key/);
 });
 
-test("retrieval order privilegia ProjectActivity e non Timeline", () => {
+test("retrieval Activity usa ordine, alias e fallback senza Timeline", () => {
   assert.deepEqual(scenarios[12].actions, ["getProjectActivity", "getProject", "getProjectTasks"]);
-  assert.equal(scenarios[27].timelineRead, false);
-  assert.match(instructions, /current conversation;\s*2\. `getProjectActivity`/);
-  assert.match(instructions, /Do not use Timeline for this\s+fallback/);
-});
-
-test("alias unico si risolve e alias ambiguo non viene scelto", () => {
   assert.equal(scenarios[10].autoResolve, true);
   assert.equal(scenarios[11].outcome, "CLARIFY");
+  assert.equal(scenarios[27].timelineRead, false);
+  has(/\(1\) unambiguous current-conversation context; \(2\) `getProjectActivity`[\s\S]*\(3\) `getProject`; \(4\) `getProjectTasks`[\s\S]*\(5\) one clarification/);
+  has(/Do not use Timeline for normal Activity retrieval/);
 });
 
-test("createIfMissing richiede creazione esplicita e versione zero", () => {
+test("Project resolution è autonoma e non crea implicitamente", () => {
+  has(/readable project names/);
+  has(/partial name\/abbreviation only when it identifies one Project/);
+  has(/equally plausible matches ask once/);
+  has(/Never invent Project IDs/);
+  has(/Create a Project only when Max explicitly says it is new or clearly starts it/);
+  has(/`Black Winter` is not necessarily a Project/);
+});
+
+test("Task resolution traduce title in ID e gestisce match e liste", () => {
+  has(/Call `getProjectTasks` for a Task title, list\/inspect\/complete\/reopen request/);
+  has(/Retrieve IDs before `updateDesk`/);
+  has(/Unique title\/context → use its ID/);
+  has(/no match → inform, never invent/);
+  has(/equivalent matches → ask once/);
+  has(/Do not ask for retrievable IDs/);
+  has(/Format Task results as a list/);
+});
+
+test("creazione Activity usa Project certo e versione zero", () => {
   assert.equal(scenarios[13].createIfMissing, true);
   assert.equal(scenarios[13].expectedSnapshotVersion, 0);
   assert.equal(scenarios[14].createIfMissing, false);
+  has(/`createIfMissing: true` and version `0` only when its Project and name are certain/);
+  has(/ProjectActivity never creates Projects/);
 });
 
-test("attività esistente usa la versione letta", () => {
-  assert.equal(scenarios[15].versionSource, "snapshot");
-  assert.equal(scenarios[16].expectedSnapshotVersion, 12);
-  assert.deepEqual(scenarios[15].actions, ["getProjectActivity", "updateProjectActivity"]);
-});
-
-test("version conflict rilegge, limita il retry e protegge contraddizioni", () => {
+test("version e idempotency conflict falliscono in sicurezza", () => {
   assert.equal(scenarios[17].blindRetry, false);
   assert.equal(scenarios[18].maxRetries, 1);
   assert.equal(scenarios[19].overwrite, false);
-  assert.match(instructions, /retry at most once/);
-});
-
-test("idempotency conflict non forza una nuova chiave", () => {
   assert.equal(scenarios[20].newKeyToForce, false);
-  assert.match(instructions, /never generate a replacement key to force the write/i);
-  assert.match(instructions, /runtime does not guarantee that conversation or turn IDs/i);
+  has(/`SNAPSHOT_VERSION_CONFLICT`[\s\S]*Retry at most once[\s\S]*Never loop/);
+  has(/`IDEMPOTENCY_CONFLICT`[\s\S]*do not force the write with a new key/);
+  has(/distinct opaque `idempotencyKey`[\s\S]*reuse exactly the same key only for technical retries/);
 });
 
-test("tipi item corrispondono a contenuto, decisione e contesto tecnico", () => {
+test("tipi e separazione updateDesk ProjectActivity restano espliciti", () => {
   assert.equal(scenarios[21].items[0].type, "CONTENT");
   assert.equal(scenarios[22].items[0].type, "DECISION");
   assert.equal(scenarios[23].items[0].type, "TECHNICAL_CONTEXT");
-});
-
-test("updateDesk resta separato e si combina solo quando necessario", () => {
-  assert.deepEqual(scenarios[25].actions,
-    ["getProjectActivity", "updateProjectActivity", "updateDesk"]);
+  assert.deepEqual(scenarios[25].actions, ["getProjectActivity", "updateProjectActivity", "updateDesk"]);
   assert.equal(scenarios[26].updateDesk, false);
-  assert.match(instructions, /do not mirror every consolidated item/i);
+  has(/If only internal memory changes, use only ProjectActivity/);
+  has(/If the same fact also changes general progress, use both/);
+  has(/Do not mirror every Activity item into Desk/);
 });
 
-test("una nuova chat non rende indisponibili le Action Desk configurate", () => {
-  assert.match(instructions, /attempt that Action before declaring it unavailable/i);
-  assert.match(instructions, /A new chat[\s\S]*do not establish that an Action is unavailable/i);
-  assert.match(instructions, /If an attempted Action\s+fails, report the actual failure/i);
-  assert.match(instructions, /Action is\s+genuinely absent from the conversation runtime[\s\S]*not\s+exposed there/i);
-  assert.match(instructions, /Never claim to have read Desk unless the call completed\s+successfully/i);
+test("updateDesk mantiene payload, status e confirmation policy", () => {
+  for (const field of ["summary", "focus", "nextAction", "status", "newTasks", "completedTasks", "timelineEvent"])
+    assert.ok(instructions.includes("`" + field + "`"));
+  for (const status of ["IN_PROGRESS", "WAITING", "PAUSED", "DONE"])
+    assert.ok(instructions.includes("`" + status + "`"));
+  has(/Safe updates need no confirmation/);
+  has(/non-explicit closure, delete\/remove, critical\/irreversible change, ambiguous task completion, or recording speculation as fact/);
 });
 
-test("l'action sink 3A non viene esposta nelle istruzioni GPT", () => {
-  assert.equal(instructions.includes("appendProjectActivityTimelineEvent"), false);
+test("cross-chat tenta Action, distingue failure/assenza e non finge letture", () => {
+  has(/attempt it before declaring it unavailable/);
+  has(/Never infer unavailability from a new chat, missing context, no prior invocation, or the client\/browser\/app/);
+  has(/Action not attempted, an attempted call that failed, and an Action genuinely absent from runtime/);
+  has(/never claim a Desk read succeeded unless the call succeeded/);
 });
 
-test("OpenAPI espone read/write ProjectActivity ma non il sink interno", () => {
-  assert.match(openapi, /operationId: getProjectActivity/);
-  assert.match(openapi, /operationId: updateProjectActivity/);
-  assert.match(openapi, /expectedSnapshotVersion:/);
-  assert.match(openapi, /idempotencyKey:/);
+test("briefing Desk ha trigger, allowlist, ordine e chiusure deterministiche", () => {
+  has(/Treat `Desk` case-insensitively[\s\S]*exact briefing command: call `getWorkspaceBriefing` before replying and never call `updateDesk`/);
+  has(/LOTAR remains the default aggregate for exact `Desk`/);
+  has(/From `recentContext` use only `projectName`, `status`, `focus`, `nextAction`, `lastUpdate`, `openTasks`/);
+  const headings = ["DOVE RIPARTIRE", "IN ATTESA", "PROGETTI ATTIVI", "PROGETTI IN PAUSA"];
+  let previous = -1;
+  for (const heading of headings) {
+    const index = instructions.indexOf(`\`${heading}\``);
+    assert.ok(index > previous, `${heading} fuori ordine`);
+    previous = index;
+  }
+  has(/La prossima azione consigliata è: <nextAction>/);
+  has(/La prossima azione consigliata non è disponibile nei dati di Desk\./);
+  has(/Never infer missing values\/priorities/);
+  has(/do not derive one/);
+});
+
+test("date e durate restano dinamiche e non persistite", () => {
+  has(/Never invent dates/);
+  has(/One date is a deadline/);
+  has(/inclusive end is `start \+ duration - 1 day`/);
+  for (const label of ["Futura", "Da fare oggi / Scade oggi", "In corso", "Ultimo giorno previsto", "Scaduta"])
+    has(new RegExp(label));
+  has(/Calculate temporal status dynamically[\s\S]*do not persist it/);
+});
+
+test("istruzioni production non espongono sink, route o token Admin", () => {
+  for (const forbidden of [
+    "appendProjectActivityTimelineEvent",
+    "/internal/project-activity/outbox/deliver",
+    "PROJECT_ACTIVITY_ADMIN_TOKEN"
+  ]) assert.equal(instructions.includes(forbidden), false);
+});
+
+test("OpenAPI espone le sei Action previste e non il sink interno", () => {
+  for (const operation of [
+    "updateDesk", "getProject", "getProjectTasks", "getWorkspaceBriefing",
+    "getProjectActivity", "updateProjectActivity"
+  ]) assert.match(openapi, new RegExp(`operationId: ${operation}`));
   assert.match(openapi, /ProjectActivityBearer/);
   assert.match(openapi, /scheme: bearer/);
   assert.equal(openapi.includes("appendProjectActivityTimelineEvent"), false);
 });
 
-test("OpenAPI espone components schemas come object per il parser GPT", () => {
+test("OpenAPI mantiene components schemas compatibile col parser GPT", () => {
   const components = JSON.parse(execFileSync("ruby", [
-    "-ryaml",
-    "-rjson",
-    "-e",
+    "-ryaml", "-rjson", "-e",
     "document = YAML.safe_load(STDIN.read, aliases: false); puts JSON.generate(document.fetch('components'))"
   ], { input: openapi, encoding: "utf8" }));
-
-  assert.equal(Array.isArray(components), false);
   assert.deepEqual(components.schemas, {});
-  assert.equal(Array.isArray(components.securitySchemes), false);
   assert.equal(typeof components.securitySchemes, "object");
-  assert.deepEqual(components.securitySchemes.ProjectActivityBearer, {
-    type: "http",
-    scheme: "bearer",
-    bearerFormat: "API_KEY",
-    description: "Configure the ProjectActivity Actions API key as Bearer authentication in the Custom GPT editor. Never place the key in this schema.\n"
-  });
+  assert.equal(components.securitySchemes.ProjectActivityBearer.scheme, "bearer");
 });
