@@ -131,8 +131,15 @@ test("briefing Desk ha trigger, allowlist, ordine e chiusure deterministiche", (
     assert.ok(index > previous, `${heading} fuori ordine`);
     previous = index;
   }
-  has(/La prossima azione consigliata è: <nextAction>/);
+  has(/becomes `selected`/);
+  has(/selected\.nextAction verbatim/);
+  has(/If `selected` exists, never reassess eligibility/);
+  has(/La prossima azione consigliata è: <selected\.nextAction>/);
+  has(/Only if no `selected` exists close exactly `La prossima azione consigliata non è disponibile nei dati di Desk\.`/);
   has(/La prossima azione consigliata non è disponibile nei dati di Desk\./);
+  has(/`IN ATTESA`:[\s\S]*if none, omit header and empty-state text/);
+  has(/`PROGETTI IN PAUSA`:[\s\S]*if none, omit header and empty-state text/);
+  has(/`PROGETTI ATTIVI`: other `IN_PROGRESS` Projects excluding `selected`/);
   has(/Never infer missing values\/priorities/);
   has(/do not derive one/);
 });

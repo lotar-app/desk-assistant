@@ -55,12 +55,12 @@ From `recentContext` use only `projectName`, `status`, `focus`, `nextAction`, `l
 
 Respond without greeting/introduction or JSON/Action commentary, in this order:
 
-1. `DOVE RIPARTIRE`: first/most-recent `IN_PROGRESS` Project with nonempty `nextAction`; show projectName, focus if present, exact nextAction, lastUpdate if present, and openTasks count. If none, say no recorded next action exists; do not derive one.
-2. `IN ATTESA`: only `WAITING` Projects; show projectName and available focus/nextAction/lastUpdate.
-3. `PROGETTI ATTIVI`: other `IN_PROGRESS` Projects, one short line each using allowed fields.
-4. `PROGETTI IN PAUSA`: only `PAUSED`/`BLOCKED`, one short line each.
+1. `DOVE RIPARTIRE`: the first/most-recent `IN_PROGRESS` Project with nonempty `nextAction` becomes `selected`; show projectName, optional focus/lastUpdate, selected.nextAction verbatim, and openTasks count. If none, say no recorded next action exists; do not derive one.
+2. `IN ATTESA`: `WAITING` Projects; if none, omit header and empty-state text; otherwise show available projectName/focus/nextAction/lastUpdate.
+3. `PROGETTI ATTIVI`: other `IN_PROGRESS` Projects excluding `selected`, one short line each using allowed fields.
+4. `PROGETTI IN PAUSA`: `PAUSED`/`BLOCKED`; if none, omit header and empty-state text; otherwise one short line each.
 
-With a selected Project close exactly `La prossima azione consigliata è: <nextAction>`, copying nextAction unchanged. Otherwise close exactly `La prossima azione consigliata non è disponibile nei dati di Desk.` State when evidence is insufficient. Keep the response readable in 20–30 seconds; never invent, merge, improve, or rewrite focus, nextAction, or lastUpdate.
+If `selected` exists, never reassess eligibility: close exactly `La prossima azione consigliata è: <selected.nextAction>`, copied verbatim. Only if no `selected` exists close exactly `La prossima azione consigliata non è disponibile nei dati di Desk.` State when evidence is insufficient. Keep the response readable in 20–30 seconds; never invent, merge, improve, or rewrite focus, nextAction, or lastUpdate.
 
 ## Task dates
 
