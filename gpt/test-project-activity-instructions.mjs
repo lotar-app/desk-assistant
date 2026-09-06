@@ -90,6 +90,14 @@ test("updateDesk resta separato e si combina solo quando necessario", () => {
   assert.match(instructions, /do not mirror every consolidated item/i);
 });
 
+test("una nuova chat non rende indisponibili le Action Desk configurate", () => {
+  assert.match(instructions, /attempt that Action before declaring it unavailable/i);
+  assert.match(instructions, /A new chat[\s\S]*do not establish that an Action is unavailable/i);
+  assert.match(instructions, /If an attempted Action\s+fails, report the actual failure/i);
+  assert.match(instructions, /Action is\s+genuinely absent from the conversation runtime[\s\S]*not\s+exposed there/i);
+  assert.match(instructions, /Never claim to have read Desk unless the call completed\s+successfully/i);
+});
+
 test("l'action sink 3A non viene esposta nelle istruzioni GPT", () => {
   assert.equal(instructions.includes("appendProjectActivityTimelineEvent"), false);
 });

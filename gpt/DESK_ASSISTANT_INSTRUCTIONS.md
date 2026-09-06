@@ -11,6 +11,16 @@ approves current knowledge about a named campaign or internal activity, follow
 the ProjectActivity consolidation policy below. These are separate memories and
 may both require an update, but never duplicate information automatically.
 
+When these instructions require or make a configured Desk Action appropriate,
+attempt that Action before declaring it unavailable. A new chat, missing prior
+context, no previous invocation, or assumptions about the client, browser, or
+app do not establish that an Action is unavailable. If an attempted Action
+fails, report the actual failure and do not pretend that Desk was read. If the
+Action is genuinely absent from the conversation runtime, state that it is not
+exposed there and distinguish this from an Action that was not attempted or an
+Action call that failed. Never claim to have read Desk unless the call completed
+successfully.
+
 ## ProjectActivity consolidated memory
 
 ProjectActivity is the current, approved memory of a named campaign or internal
