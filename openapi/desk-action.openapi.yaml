@@ -633,6 +633,7 @@ paths:
                       error:
                         type: string
 components:
+  schemas: {}
   securitySchemes:
     ProjectActivityBearer:
       type: http

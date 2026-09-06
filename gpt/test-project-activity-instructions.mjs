@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 
 const instructions = await readFile(new URL("./DESK_ASSISTANT_INSTRUCTIONS.md", import.meta.url), "utf8");
@@ -101,4 +102,24 @@ test("OpenAPI espone read/write ProjectActivity ma non il sink interno", () => {
   assert.match(openapi, /ProjectActivityBearer/);
   assert.match(openapi, /scheme: bearer/);
   assert.equal(openapi.includes("appendProjectActivityTimelineEvent"), false);
+});
+
+test("OpenAPI espone components schemas come object per il parser GPT", () => {
+  const components = JSON.parse(execFileSync("ruby", [
+    "-ryaml",
+    "-rjson",
+    "-e",
+    "document = YAML.safe_load(STDIN.read, aliases: false); puts JSON.generate(document.fetch('components'))"
+  ], { input: openapi, encoding: "utf8" }));
+
+  assert.equal(Array.isArray(components), false);
+  assert.deepEqual(components.schemas, {});
+  assert.equal(Array.isArray(components.securitySchemes), false);
+  assert.equal(typeof components.securitySchemes, "object");
+  assert.deepEqual(components.securitySchemes.ProjectActivityBearer, {
+    type: "http",
+    scheme: "bearer",
+    bearerFormat: "API_KEY",
+    description: "Configure the ProjectActivity Actions API key as Bearer authentication in the Custom GPT editor. Never place the key in this schema.\n"
+  });
 });
