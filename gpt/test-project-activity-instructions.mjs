@@ -66,14 +66,19 @@ test("Project resolution è autonoma e non crea implicitamente", () => {
 });
 
 test("Task resolution traduce title in ID e gestisce match e liste", () => {
-  has(/`getProjectTasks` is required for Task titles and list\/inspect\/complete\/reopen requests/);
-  has(/Resolve before `updateDesk`/);
+  has(/`getProjectTasks` is required for Task titles or list\/inspect\/complete\/reopen requests/);
+  has(/Resolve IDs before `updateDesk`/);
   has(/Unique title\/context → use ID/);
   has(/none → inform/);
   has(/multiple → clarify once/);
-  has(/never ask for retrievable IDs or invent them/);
-  has(/Task listings require Markdown bullets\/numbers/);
-  has(/newline-only rows do not count/);
+  has(/never ask for or invent them/);
+  has(/Each Task line must start `- `, `\* `, or `1\. ` etc\.; emoji may follow, not replace it/);
+
+  const markdownTask = /^(?:[-*] |\d+\. )/;
+  for (const row of ["- ✅ Completata — Task A", "- ⬜ Aperta — Task B", "1. ✅ Completata — Task A"])
+    assert.match(row, markdownTask);
+  for (const row of ["✅ Completata — Task A", "⬜ Aperta — Task B"])
+    assert.doesNotMatch(row, markdownTask);
 });
 
 test("creazione Activity usa Project certo e versione zero", () => {
