@@ -1,5 +1,39 @@
 # Desk Assistant - Changelog
 
+## ProjectActivity activation - 2026-09-06
+
+### Added
+- Attivate le Actions `getProjectActivity` e `updateProjectActivity` con
+  autenticazione bearer dedicata e separata dalle route amministrative.
+- Attivato Cloudflare D1 `desk-projectactivity` con migrazioni 0001–0003,
+  optimistic concurrency, idempotenza, revisioni e outbox.
+- Attivato il registro Apps Script `ProjectActivityTimelineDelivery` tramite
+  `PROJECT_ACTIVITY_TIMELINE_DELIVERY_V1`.
+
+### Changed
+- Pubblicata l'architettura Timeline transizionale: writer Desk legacy A-D,
+  writer ProjectActivity canonico A-G e parser mixed-layout.
+- Pubblicate le istruzioni production del Desk Assistant e rese disponibili le
+  sei Actions `updateDesk`, `getProject`, `getProjectTasks`,
+  `getProjectActivity`, `updateProjectActivity`, `getWorkspaceBriefing`.
+
+### Fixed
+- Corretto il binding del `fetch` nativo nel delivery Worker, preservando fetch
+  iniettato, diagnostica sanitizzata e semantica di retry.
+- Resa esplicita `components.schemas` per la compatibilità del parser GPT
+  Actions.
+
+### Validation
+- Gate 7 E2E completato: snapshot, conflitti, idempotenza, outbox, Timeline e
+  registro verificati senza duplicati.
+- Gate 8 e Gate 9 completati: Actions, auth, istruzioni e test post-save
+  verificati, incluse pipeline ProjectActivity e legacy Desk.
+- Fixture finale: `ProjectActivity Smoke Test`, snapshotVersion 6,
+  `test.flag` assente dopo revoca esplicita.
+- Copie client temporanee dei token eliminate senza esposizione dei valori.
+- Il rendering dei marker Markdown delle task è un limite prompt-only
+  non bloccante e non costituisce garanzia runtime.
+
 ## v1.4 - Unreleased
 
 ### Added

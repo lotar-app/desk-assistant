@@ -85,8 +85,8 @@ La Fase 3B definisce il comportamento di recupero e consolidamento automatico
 del Desk Assistant, senza attivare il runtime reale. Policy e limiti sono in
 [`PROJECT_ACTIVITY_PHASE3B.md`](PROJECT_ACTIVITY_PHASE3B.md).
 
-Il piano di attivazione controllata, con architettura transizionale tecnicamente
-`GO` e gate operativi ancora da completare, è in
+Il runbook dell'attivazione controllata, completata e validata fino al Gate 9,
+è in
 [`PROJECT_ACTIVITY_PHASE4_ACTIVATION_RUNBOOK.md`](PROJECT_ACTIVITY_PHASE4_ACTIVATION_RUNBOOK.md).
 
 L'hardening pre-attivazione di autenticazione, route admin, migrazione Timeline
@@ -99,7 +99,16 @@ e il registro delivery sono descritti in
 [`PROJECT_ACTIVITY_TIMELINE_CANONICALIZATION.md`](PROJECT_ACTIVITY_TIMELINE_CANONICALIZATION.md).
 Non è autorizzato il rollout del writer canonico globale. Il controllo manuale
 live non ha rilevato pivot e Max ha confermato che non esistono consumer esterni
-noti; resta obbligatorio completare i gate operativi prima del deploy.
+noti. Lo split transizionale è attivo: Desk continua a scrivere A-D e soltanto
+ProjectActivity scrive A-G con registro delivery separato.
+
+Lo stato production finale comprende D1 con migrazioni 0001–0003, Apps Script
+versione 27, Worker ProjectActivity, sei Actions del Custom GPT e istruzioni di
+produzione pubblicate. Lo smoke E2E ha validato snapshot, concurrency,
+idempotenza, outbox e sink Timeline senza duplicati. La fixture persistente
+`ProjectActivity Smoke Test` è rimasta a snapshotVersion 6 con `test.flag`
+assente dopo revoca esplicita. Il rendering Markdown degli elenchi task resta
+un limite prompt-only non bloccante e non è garantito dal runtime.
 
 L'architettura segue la pipeline completa dell'assistente:
 

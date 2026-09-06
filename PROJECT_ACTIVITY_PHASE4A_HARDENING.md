@@ -81,7 +81,7 @@ checker non crea risorse, non carica Apps Script e non esegue deploy.
 - canonical name: `ProjectActivity Smoke Test`;
 - kind: `INTERNAL_TEST`;
 - stable key: `test.flag`;
-- value: `fixture-only`;
+- initial smoke value: `fixture-only`;
 - type: `DECISION`;
 - alias aggiuntivi: nessuno;
 - source type: `ACTIVATION_SMOKE_TEST`.
@@ -93,9 +93,15 @@ all'ID. Max ha approvato il Project tecnico `Desk - Gestione task API`, ID
 `PRJ-20260720130424`. Non creare automaticamente un Project e non improvvisare
 cleanup SQL.
 
+Stato finale verificato dopo Gate 9: Activity ID
+`ACT-d134baad-01da-41ef-8468-432e2df408d8`, snapshotVersion 6 e stable key
+`test.flag` assente dopo revoca esplicita. Questo stato va preservato; il valore
+iniziale `fixture-only` non deve essere ripristinato.
+
 ## Stato
 
-I tre blocchi tecnici del runbook sono chiusi nel codice. Il GO resta
-condizionato alle verifiche remote e alle decisioni manuali elencate nel runbook:
-Project tecnico della fixture, valori secret, account/target, backup reale e
-versioni di rollback. Nessuna attivazione è stata eseguita in Fase 4A.
+I tre blocchi tecnici del runbook sono stati chiusi dal hardening e poi
+verificati durante l'attivazione. D1, Apps Script, registro delivery, Worker,
+Actions e istruzioni GPT risultano attivi; i Gate 7–9 sono PASS. Questa sezione
+descrive la Fase 4A storica, mentre lo stato production e le evidenze finali
+sono registrati nel runbook Fase 4.

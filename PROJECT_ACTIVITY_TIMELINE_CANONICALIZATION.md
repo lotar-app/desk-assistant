@@ -92,10 +92,17 @@ part of activation.
 
 ## Rollout
 
-Mixed-layout parsing is locally supported. On 2026-09-04 Max manually verified
-all live sheets and found no pivot, and confirmed no known external Desk or
-Timeline consumer. The transitional production architecture is therefore GO,
-subject to the remaining operational gates. The global canonical writer for
-Project, Task, memory, or `updateDesk` remains unauthorized: activation may
-introduce canonical rows only for ProjectActivity. Never rewrite historical
+Mixed-layout parsing is supported. On 2026-09-04 Max manually verified all live
+sheets and found no pivot, and confirmed no known external Desk or Timeline
+consumer. The transitional architecture completed its operational gates and is
+active in production. Gate 7 verified one Timeline row and one delivery
+registry record per outbox event, without duplicates. The global canonical
+writer for Project, Task, memory, or `updateDesk` remains unauthorized:
+ProjectActivity alone may introduce canonical rows. Never rewrite historical
 Timeline rows automatically.
+
+The active registry was created by
+`PROJECT_ACTIVITY_TIMELINE_DELIVERY_V1`; `TIMELINE_EVENT_ID_V1` remains
+superseded and non-applicable. Apps Script production is version 27 and the
+active Worker version recorded at final validation is
+`4edc6eff-8cd6-4e7d-9887-82a852d6a806`.

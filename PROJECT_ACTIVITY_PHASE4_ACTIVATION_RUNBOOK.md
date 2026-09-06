@@ -1,12 +1,55 @@
 # ProjectActivity — Fase 4: runbook di attivazione controllata
 
-Questo documento è un piano e non autorizza creazioni, migrazioni, deploy,
-scritture reali o modifiche al Custom GPT. Comandi marcati `MUTATIVO` devono
-essere eseguiti solo in una successiva sessione autorizzata.
+Questo documento conserva il piano eseguito e le relative salvaguardie; non
+costituisce autorizzazione per nuove mutazioni. L'attivazione descritta è stata
+completata fino al Gate 9. Qualsiasi operazione futura marcata `MUTATIVO`
+richiede una nuova autorizzazione esplicita.
+
+## Stato finale dell'attivazione
+
+ProjectActivity è attivo in produzione. Baseline applicativa e istruzioni di
+produzione: `10b03207591e5eaf87eeb8cc66f961f2691db672`, raggiungibile da
+`origin/main`. La baseline funzionale storica dello split Timeline resta
+`1cb122ed9e582b9600377886d98a6ae53bdbc235`; il safeguard Git registrato è
+`438ea09251835e3b3255e636a21ca51f3a96f1d2`.
+
+Stato verificato:
+
+- D1 `desk-projectactivity`, ID
+  `72660130-74f3-4082-8b9d-4be77d5464ea`, con migrazioni 0001–0003 applicate;
+- Apps Script versione 27 e registro `ProjectActivityTimelineDelivery` attivo
+  tramite `PROJECT_ACTIVITY_TIMELINE_DELIVERY_V1`;
+- Worker production version
+  `4edc6eff-8cd6-4e7d-9887-82a852d6a806`;
+- Gate 7 E2E PASS: outbox, Timeline e registro verificati senza duplicati. Il
+  difetto di binding del `fetch` nativo è stato corretto dal commit
+  `9c41f011dfc6b52047d3c446900f32e61d80e82a`;
+- Gate 8 PASS: sei Actions attive (`updateDesk`, `getProject`,
+  `getProjectTasks`, `getProjectActivity`, `updateProjectActivity`,
+  `getWorkspaceBriefing`), bearer Actions configurato e credenziale Admin non
+  esposta al GPT. Il fix di compatibilità del parser schema è
+  `156b9a69d17c85d7c8344a1237ec18eb055331d1`;
+- Gate 9 PASS: pubblicato integralmente
+  `gpt/DESK_ASSISTANT_INSTRUCTIONS.md` (7.400 caratteri Unicode, 7.424 byte
+  UTF-8, 67 righe). In nuova chat sono passati exact `Desk`, disponibilità
+  Actions cross-chat, lettura ProjectActivity e legacy `getProject`;
+- verificati inoltre stale `SNAPSHOT_VERSION_CONFLICT` con rilettura e massimo
+  un safe retry, `IDEMPOTENCY_CONFLICT` senza bypass, write internal-only senza
+  `updateDesk`, dual write ProjectActivity + `updateDesk`, revoca esplicita e
+  task listing tramite Action senza write;
+- il rendering dei marker Markdown delle task resta un limite prompt-only
+  accettato e non bloccante: non è una garanzia del runtime;
+- fixture persistente `ProjectActivity Smoke Test`, ID
+  `ACT-d134baad-01da-41ef-8468-432e2df408d8`: stato finale effettivo
+  snapshotVersion 6, `test.flag` assente dopo revoca esplicita. Non ripristinare
+  `fixture-only`;
+- cleanup sicurezza completato: la directory temporanea
+  `/private/tmp/desk-pa-gate7.srwRqi` e le copie client dei token sono assenti;
+  nessun valore è stato esposto durante il cleanup.
 
 ## Stato rilevabile e verifiche completate
 
-Baseline funzionale verificata: branch
+Baseline funzionale iniziale verificata: branch
 `feature/projectactivity-timeline-schema-fix`, commit
 `1cb122ed9e582b9600377886d98a6ae53bdbc235`. L'eventuale commit documentale
 successivo costituisce il release commit finale senza modificare questa
@@ -14,12 +57,14 @@ baseline funzionale. Al precheck precedente `main` e `origin/main` erano ancora
 a `0e149c0`; il Gate 0 era bloccato soltanto perché la release non era ancora
 stata integrata nel remoto.
 
-Il repository identifica il Worker `twilight-rice-7a74`, server OpenAPI
+La baseline iniziale identificava il Worker `twilight-rice-7a74`, server OpenAPI
 `https://twilight-rice-7a74.fastmax.workers.dev`, binding atteso `DB`, database
 consigliato `desk-projectactivity`, directory migrazioni `worker/migrations`, e
-uno Script Apps Script configurato in `.clasp.json`. Non contiene un
-`database_id`, un deployment ID Apps Script, una versione Worker attiva, lo
-stato D1 remoto o una prova della configurazione corrente del Custom GPT.
+uno Script Apps Script configurato in `.clasp.json`. In quella fase il
+repository non conteneva ancora il `database_id` reale e non costituiva prova
+del deployment Apps Script, della versione Worker attiva, dello stato D1 remoto
+o della configurazione del Custom GPT; tali evidenze sono ora registrate nello
+stato finale sopra.
 
 `DESK_APPS_SCRIPT_URL` e `DESK_API_TOKEN` sono richiesti dal Worker. Il token è
 inviato nel body JSON verso Apps Script. I valori reali non devono essere
@@ -35,7 +80,8 @@ nessun consumer esterno noto di Desk/Timeline. Il filtro Timeline è rimasto
 invariato. Il gate architetturale del rollout transizionale è quindi
 tecnicamente GO.
 
-Restano da verificare nei gate operativi:
+Le seguenti verifiche erano richieste prima dell'attivazione e risultano ora
+completate; l'elenco resta come traccia del preflight:
 
 - account Cloudflare, account ID, Worker attivo, version ID e route reali;
 - autenticazione Wrangler e disponibilità del piano D1;
@@ -52,8 +98,8 @@ dal checker e dalla review prima del GO:
 
 1. entrypoint amministrativi per la migration del registro delivery separato;
 2. un trigger Worker autenticato e limitato per invocare
-   `deliverOutboxEvent`/`deliverPendingOutbox`. Le primitive non sono oggi
-   raggiungibili nel Worker deployato e non esiste scheduler;
+   `deliverOutboxEvent`/`deliverPendingOutbox`; non è stato introdotto uno
+   scheduler automatico;
 3. autenticazione inbound delle route ProjectActivity tramite secret Actions;
 4. checker release ProjectActivity read-only in
    `scripts/project-activity-release-check.sh`;
@@ -298,6 +344,10 @@ binding D1 mantenuto. Non eliminare D1 né migrazioni.
 
 ### 7. Smoke test tecnico end-to-end — MUTATIVO
 
+**Completato — PASS.** La fixture finale è a snapshotVersion 6 e
+`test.flag` è assente dopo la revoca esplicita; i passi seguenti descrivono la
+sequenza di attivazione, non lo stato finale da ripristinare.
+
 Usare un Project tecnico esistente approvato manualmente, non un Project
 commerciale e non Black Winter. Activity: `ProjectActivity Smoke Test`; item
 `test.flag = "fixture-only"`. Poiché non esiste delete activity, la fixture è
@@ -324,6 +374,10 @@ DELETE. La fixture resta nel Project tecnico e va documentata.
 
 ### 8. Custom GPT Actions — MANUALE, MUTATIVO
 
+**Completato — PASS.** Le sei Actions previste sono attive; auth Actions e
+separazione dalla credenziale Admin sono state verificate. `getProjectActivity`
+e legacy `getProject` hanno superato il controllo post-save.
+
 Caricare `openapi/desk-action.openapi.yaml`, verificare server e operationId
 `getProjectActivity`/`updateProjectActivity`, configurare l'autenticazione
 bearer nel pannello Actions senza inserirla nello schema o nelle istruzioni in
@@ -335,6 +389,11 @@ builder modifica/rifiuta lo schema, perde le Action esistenti o invia richieste
 senza auth. Rollback: ripristinare schema e autenticazione precedenti.
 
 ### 9. Istruzioni Desk Assistant — MANUALE, MUTATIVO
+
+**Completato — PASS.** L'artifact pubblicato è
+`gpt/DESK_ASSISTANT_INSTRUCTIONS.md` al release commit
+`10b03207591e5eaf87eeb8cc66f961f2691db672`; le validazioni manuali finali
+sono registrate nello stato finale sopra.
 
 Copiare integralmente il contenuto revisionato di
 `gpt/DESK_ASSISTANT_INSTRUCTIONS.md`, conservando prima una copia della versione
@@ -359,21 +418,21 @@ due Actions ProjectActivity lasciando intatti D1 e Timeline.
 
 GO soltanto con tutte le caselle:
 
-- [ ] release commit approvato, pulito e presente su `origin/main`;
-- [ ] test ProjectActivity, Apps Script e GPT tutti verdi;
-- [ ] produzione inventariata, version ID/deployment ID precedenti annotati;
-- [ ] autenticazione inbound e admin implementata e testata;
-- [ ] entrypoint migration registro delivery sicuri e revisionati;
-- [ ] backup Timeline fisico verificato;
+- [x] release commit approvato, pulito e presente su `origin/main`;
+- [x] test ProjectActivity, Apps Script e GPT tutti verdi;
+- [x] produzione inventariata, version ID/deployment ID precedenti annotati;
+- [x] autenticazione inbound e admin implementata e testata;
+- [x] entrypoint migration registro delivery sicuri e revisionati;
+- [x] backup Timeline fisico verificato;
 - [x] schema Timeline reale, pivot e consumer esterni verificati;
-- [ ] registro `ProjectActivityTimelineDelivery` creato e vuoto al post-check;
-- [ ] D1 creato con ID reale e binding `DB` corretto;
-- [ ] migrazioni 0001/0002/0003 e indici verificati;
-- [ ] secrets Worker presenti e allineati senza esposizione;
-- [ ] sink Apps Script e read pipeline verificati;
-- [ ] OpenAPI valida e sink interno non esposto;
-- [ ] rollback Worker, Apps Script e GPT pronto;
-- [ ] fixture persistente approvata;
-- [ ] nessun segreto nel repository.
+- [x] registro `ProjectActivityTimelineDelivery` creato e vuoto al post-check;
+- [x] D1 creato con ID reale e binding `DB` corretto;
+- [x] migrazioni 0001/0002/0003 e indici verificati;
+- [x] secrets Worker presenti e allineati senza esposizione;
+- [x] sink Apps Script e read pipeline verificati;
+- [x] OpenAPI valida e sink interno non esposto;
+- [x] rollback Worker, Apps Script e GPT pronto;
+- [x] fixture persistente approvata e stato finale documentato;
+- [x] nessun segreto nel repository e copie client temporanee eliminate.
 
-Qualsiasi casella mancante significa **NO-GO**.
+Esito finale: **GO — attivazione completata e validata fino al Gate 9**.
