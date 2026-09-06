@@ -66,13 +66,14 @@ test("Project resolution è autonoma e non crea implicitamente", () => {
 });
 
 test("Task resolution traduce title in ID e gestisce match e liste", () => {
-  has(/Call `getProjectTasks` for a Task title, list\/inspect\/complete\/reopen request/);
-  has(/Retrieve IDs before `updateDesk`/);
-  has(/Unique title\/context → use its ID/);
-  has(/no match → inform, never invent/);
-  has(/equivalent matches → ask once/);
-  has(/Do not ask for retrievable IDs/);
-  has(/Format Task results as a list/);
+  has(/`getProjectTasks` is required for Task titles and list\/inspect\/complete\/reopen requests/);
+  has(/Resolve before `updateDesk`/);
+  has(/Unique title\/context → use ID/);
+  has(/none → inform/);
+  has(/multiple → clarify once/);
+  has(/never ask for retrievable IDs or invent them/);
+  has(/Task listings require Markdown bullets\/numbers/);
+  has(/newline-only rows do not count/);
 });
 
 test("creazione Activity usa Project certo e versione zero", () => {
