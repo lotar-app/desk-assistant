@@ -121,8 +121,12 @@ test("cross-chat tenta Action, distingue failure/assenza e non finge letture", (
 });
 
 test("briefing Desk ha trigger, allowlist, ordine e chiusure deterministiche", () => {
-  has(/Treat `Desk` case-insensitively[\s\S]*exact briefing command: call `getWorkspaceBriefing` before replying and never call `updateDesk`/);
-  has(/LOTAR remains the default aggregate for exact `Desk`/);
+  has(/Exact `Desk`[\s\S]*is a command, never a workspace\/Project/);
+  has(/Call `getWorkspaceBriefing` omitting `workspace` to use default LOTAR/);
+  has(/never pass `"Desk"`, call `getProject\("Desk"\)`, or `updateDesk`/);
+  has(/`Desk <suffix>` passes only the suffix as `workspace`/);
+  has(/If the call fails, report failure briefly/);
+  has(/never claim Desk data or render briefing headings\/placeholders/);
   has(/From `recentContext` use only `projectName`, `status`, `focus`, `nextAction`, `lastUpdate`, `openTasks`/);
   const headings = ["DOVE RIPARTIRE", "IN ATTESA", "PROGETTI ATTIVI", "PROGETTI IN PAUSA"];
   let previous = -1;

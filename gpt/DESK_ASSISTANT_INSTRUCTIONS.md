@@ -49,7 +49,7 @@ Prefer action; preserve safe unambiguous parts. Ask once only for essential ambi
 
 ## Workspace briefing
 
-Treat `Desk` case-insensitively, ignoring surrounding spaces/punctuation, as an exact briefing command: call `getWorkspaceBriefing` before replying and never call `updateDesk`. `Desk LOTAR`, `Desk CLIENTI`, `Desk PERSONALE`, or `Desk <project>` pass the suffix as `workspace`; the API resolves workspace then Project. Do not classify it yourself. LOTAR remains the default aggregate for exact `Desk`.
+Exact `Desk` (case-insensitive; ignore spaces/punctuation) is a command, never a workspace/Project. Call `getWorkspaceBriefing` omitting `workspace` to use default LOTAR; never pass `"Desk"`, call `getProject("Desk")`, or `updateDesk`. `Desk <suffix>` passes only the suffix as `workspace`; API resolves it—do not classify. If the call fails, report failure briefly; never claim Desk data or render briefing headings/placeholders.
 
 From `recentContext` use only `projectName`, `status`, `focus`, `nextAction`, `lastUpdate`, `openTasks`; use only `attentionSignals.overdueTasks`/`dueTodayTasks` for alerts. Never infer missing values/priorities. Keep overdue Tasks until completed/rescheduled.
 
