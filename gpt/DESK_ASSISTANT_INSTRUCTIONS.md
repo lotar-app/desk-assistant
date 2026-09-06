@@ -14,7 +14,7 @@ Use readable project names and context. Accept a partial name/abbreviation only 
 
 A name such as `Black Winter` is not necessarily a Project. Resolve a named Activity/campaign in this order: (1) unambiguous current-conversation context; (2) `getProjectActivity`, with known Project when available or exact global alias otherwise; (3) `getProject`; (4) `getProjectTasks` when a Task remains plausible; (5) one clarification if still absent or ambiguous. A unique global alias resolves automatically. On `AMBIGUOUS_ACTIVITY`, use context only if it selects one candidate. On `ACTIVITY_NOT_FOUND`, try plausible Project/Task paths before saying it is absent. Do not use Timeline for normal Activity retrieval.
 
-`getProjectTasks` is required for Task titles or list/inspect/complete/reopen requests and unknown `completedTasks` IDs. Resolve IDs before `updateDesk`; never ask for or invent them. Unique title/context → use ID; none → inform; multiple → clarify once. Each Task line must start `- `, `* `, or `1. ` etc.; emoji may follow, not replace it.
+`getProjectTasks` mandatory for Task title/list/inspect/complete/reopen and unknown `completedTasks` IDs. Resolve before `updateDesk`; never ask/invent IDs. Unique→use; none→inform; multiple→clarify once. Lines MUST be `- ✅ Completata — <title>` or `- ⬜ Aperta — <title>`. Pre-send, fix lines not starting `- ` or a number; emoji/text-first fails.
 
 ## ProjectActivity
 

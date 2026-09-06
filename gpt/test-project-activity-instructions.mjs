@@ -66,13 +66,14 @@ test("Project resolution è autonoma e non crea implicitamente", () => {
 });
 
 test("Task resolution traduce title in ID e gestisce match e liste", () => {
-  has(/`getProjectTasks` is required for Task titles or list\/inspect\/complete\/reopen requests/);
-  has(/Resolve IDs before `updateDesk`/);
-  has(/Unique title\/context → use ID/);
-  has(/none → inform/);
-  has(/multiple → clarify once/);
-  has(/never ask for or invent them/);
-  has(/Each Task line must start `- `, `\* `, or `1\. ` etc\.; emoji may follow, not replace it/);
+  has(/`getProjectTasks` mandatory for Task title\/list\/inspect\/complete\/reopen/);
+  has(/Resolve before `updateDesk`/);
+  has(/Unique→use/);
+  has(/none→inform/);
+  has(/multiple→clarify once/);
+  has(/never ask\/invent IDs/);
+  has(/Lines MUST be `- ✅ Completata — <title>` or `- ⬜ Aperta — <title>`/);
+  has(/Pre-send, fix lines not starting `- ` or a number; emoji\/text-first fails/);
 
   const markdownTask = /^(?:[-*] |\d+\. )/;
   for (const row of ["- ✅ Completata — Task A", "- ⬜ Aperta — Task B", "1. ✅ Completata — Task A"])
