@@ -15,9 +15,10 @@ try {
     SELECT count(*) AS count
     FROM sqlite_master
     WHERE type = 'table'
-      AND name IN ('system_metadata', 'containers', 'tasks', 'd1_migrations');
+      AND name IN ('system_metadata', 'containers', 'tasks', 'd1_migrations',
+        'mcp_capability_test');
   `);
-  assert.match(schema, /(?:"count"\s*:\s*4|count[^0-9]*4)/i);
+  assert.match(schema, /(?:"count"\s*:\s*5|count[^0-9]*5)/i);
   assert.match(execute("PRAGMA foreign_keys;"), /foreign_keys[^0-9]*1/i);
   console.log("DESK V2 FOUNDATION CHECK PASSED");
 } finally {

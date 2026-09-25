@@ -1,10 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const wrangler = path.join(root, "node_modules", ".bin", "wrangler");
@@ -12,6 +14,7 @@ const wrangler = path.join(root, "node_modules", ".bin", "wrangler");
 test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", async () => {
   const persistence = fs.mkdtempSync(path.join(os.tmpdir(), "desk-v2-test-"));
   const port = 8900 + (process.pid % 500);
+  const token = randomUUID();
   let workerProcess;
 
   try {
@@ -23,11 +26,13 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
     assert.match(secondApply, /No migrations to apply|already applied|Migrations to be applied:\s*0/i);
 
     assertQuery("SELECT count(*) AS value FROM d1_migrations WHERE name = '0001_foundation.sql';", /value[^0-9]*1/i);
+    assertQuery("SELECT count(*) AS value FROM d1_migrations WHERE name = '0002_mcp_capability_test.sql';", /value[^0-9]*1/i);
     assertQuery("SELECT value FROM system_metadata WHERE key = 'system_name';", /desk-v2/i);
     assertQuery("SELECT value FROM system_metadata WHERE key = 'environment';", /v2-development/i);
     assertQuery("PRAGMA foreign_keys;", /foreign_keys[^0-9]*1/i);
     assertQuery(`SELECT count(*) AS value FROM sqlite_master WHERE type = 'table'
-      AND name IN ('system_metadata','containers','tasks','d1_migrations');`, /value[^0-9]*4/i);
+      AND name IN ('system_metadata','containers','tasks','d1_migrations','mcp_capability_test');`, /value[^0-9]*5/i);
+    assertQuery("SELECT count(*) AS value FROM mcp_capability_test;", /value[^0-9]*0/i);
 
     execute(`INSERT INTO containers
       (container_id,parent_id,name,status,lifecycle_state,version,created_at,updated_at)
@@ -74,7 +79,8 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
       '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z');`, /CHECK constraint/i);
 
     workerProcess = spawn(wrangler, ["dev", "--local", "--persist-to", persistence,
-      "--port", String(port), "--ip", "127.0.0.1"], {
+      "--port", String(port), "--ip", "127.0.0.1", "--var",
+      `DESK_V2_MCP_BEARER_TOKEN:${token}`], {
       cwd: root,
       env: sanitizedEnvironment(),
       stdio: ["ignore", "pipe", "pipe"]
@@ -89,6 +95,30 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
     assert.equal((await ready.json()).status, "ready");
     assert.equal((await fetch(`http://127.0.0.1:${port}/missing`)).status, 404);
     assert.equal((await fetch(`http://127.0.0.1:${port}/health`, { method: "POST" })).status, 405);
+
+    const client = new Client({ name: "desk-v2-integration-test", version: "1.0.0" });
+    const transport = new StreamableHTTPClientTransport(
+      new URL(`http://127.0.0.1:${port}/mcp`),
+      { authProvider: { token: async () => token } }
+    );
+    await client.connect(transport);
+    try {
+      const tools = await client.listTools();
+      assert.equal(tools.tools.length, 2);
+      const read = await client.callTool({ name: "desk_v2_capability_read", arguments: {} });
+      assert.equal(read.structuredContent.containerCount, 2);
+      assert.equal(read.structuredContent.taskCount, 1);
+      const write = await client.callTool({
+        name: "desk_v2_capability_write",
+        arguments: { marker: "CODEX-LOCAL-D1-CAPABILITY" }
+      });
+      assert.equal(write.structuredContent.marker, "CODEX-LOCAL-D1-CAPABILITY");
+      assertQuery("SELECT COUNT(*) AS value FROM mcp_capability_test;", /value[^0-9]*1/i);
+      execute("DELETE FROM mcp_capability_test WHERE marker='CODEX-LOCAL-D1-CAPABILITY';");
+      assertQuery("SELECT COUNT(*) AS value FROM mcp_capability_test;", /value[^0-9]*0/i);
+    } finally {
+      await client.close();
+    }
   } finally {
     if (workerProcess && !workerProcess.killed) workerProcess.kill("SIGTERM");
     fs.rmSync(persistence, { recursive: true, force: true });
@@ -108,6 +138,21 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
       "--persist-to", persistence, "--command", compact(sql)]);
     assert.notEqual(result.status, 0, `SQL unexpectedly succeeded: ${sql}`);
     assert.match(`${result.stdout}\n${result.stderr}`, pattern);
+  }
+});
+
+test("migration MCP si applica sopra 0001 senza modificarla", () => {
+  const persistence = fs.mkdtempSync(path.join(os.tmpdir(), "desk-v2-staged-"));
+  try {
+    command(["d1", "execute", "DESK_V2_DB", "--local", "--persist-to",
+      persistence, "--file", path.join(root, "migrations", "0001_foundation.sql")]);
+    command(["d1", "execute", "DESK_V2_DB", "--local", "--persist-to",
+      persistence, "--file", path.join(root, "migrations", "0002_mcp_capability_test.sql")]);
+    const result = command(["d1", "execute", "DESK_V2_DB", "--local", "--persist-to",
+      persistence, "--command", "SELECT COUNT(*) AS value FROM mcp_capability_test;"]);
+    assert.match(result, /value[^0-9]*0/i);
+  } finally {
+    fs.rmSync(persistence, { recursive: true, force: true });
   }
 });
 

@@ -5,11 +5,17 @@
   "type": "module",
   "scripts": {
     "verify:isolation": "node scripts/verify-isolation.mjs",
-    "test:unit": "node --test test/environment.test.mjs test/isolation.test.mjs test/worker.test.mjs",
+    "test:unit": "node --test test/environment.test.mjs test/isolation.test.mjs test/worker.test.mjs test/mcp.test.mjs",
     "test:foundation": "node --test test/foundation.integration.test.mjs",
     "test": "npm run verify:isolation && npm run test:unit && npm run test:foundation"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
     "wrangler": "^4.38.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.0.0",
+    "agents": "0.24.0",
+    "zod": "4.6.5"
   }
 }
