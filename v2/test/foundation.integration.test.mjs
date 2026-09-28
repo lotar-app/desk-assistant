@@ -104,7 +104,34 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
     await client.connect(transport);
     try {
       const tools = await client.listTools();
-      assert.equal(tools.tools.length, 2);
+      assert.equal(tools.tools.length, 3);
+      assert.ok(tools.tools.some(tool => tool.name === "desk_v2_get_containers"));
+
+      const roots = await client.callTool({
+        name: "desk_v2_get_containers",
+        arguments: {}
+      });
+      assert.deepEqual(roots.structuredContent.containers.map(row => row.containerId),
+        ["FIXTURE-ROOT"]);
+      assert.equal(roots.structuredContent.containers[0].focus, null);
+      assert.equal(roots.structuredContent.containers[0].owner, null);
+      assert.equal(roots.structuredContent.containers[0].nextAction, null);
+
+      const children = await client.callTool({
+        name: "desk_v2_get_containers",
+        arguments: { parentId: "FIXTURE-ROOT" }
+      });
+      assert.deepEqual(children.structuredContent.containers.map(row => row.containerId),
+        ["FIXTURE-CHILD"]);
+
+      const byId = await client.callTool({
+        name: "desk_v2_get_containers",
+        arguments: { containerId: "FIXTURE-CHILD" }
+      });
+      assert.equal(byId.structuredContent.scope, "BY_ID");
+      assert.equal(byId.structuredContent.count, 1);
+      assert.equal(byId.structuredContent.lifecycle, null);
+
       const read = await client.callTool({ name: "desk_v2_capability_read", arguments: {} });
       assert.equal(read.structuredContent.containerCount, 2);
       assert.equal(read.structuredContent.taskCount, 1);

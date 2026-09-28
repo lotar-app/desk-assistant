@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { CapabilityRepository } from "./capability-repository.mjs";
+import { ContainerRepository } from "./container-repository.mjs";
 
 const markerSchema = z.string()
   .min(1)
@@ -8,9 +9,60 @@ const markerSchema = z.string()
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/,
     "Use only letters, numbers, dot, underscore, colon, or hyphen");
 
+const containerIdSchema = z.string().refine(value => value.trim().length > 0, {
+  message: "Container ID must not be empty or whitespace"
+});
+const lifecycleSchema = z.enum(["ACTIVE", "ARCHIVED", "ALL"]);
+const getContainersInputSchema = z.union([
+  z.object({ containerId: containerIdSchema }).strict(),
+  z.object({
+    parentId: containerIdSchema.optional(),
+    lifecycle: lifecycleSchema.default("ACTIVE")
+  }).strict()
+]);
+
+const containerSchema = z.object({
+  containerId: z.string(),
+  parentId: z.string().nullable(),
+  name: z.string(),
+  status: z.string(),
+  focus: z.string().nullable(),
+  owner: z.string().nullable(),
+  nextAction: z.string().nullable(),
+  lifecycleState: z.enum(["ACTIVE", "ARCHIVED"]),
+  version: z.number().int().positive(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  archivedAt: z.string().nullable()
+}).strict();
+
 export function createDeskMcpServer(env) {
   const server = new McpServer({ name: "desk-v2-capability-test", version: "0.1.0" });
   const repository = new CapabilityRepository(env.DESK_V2_DB);
+  const containerRepository = new ContainerRepository(env.DESK_V2_DB);
+
+  server.registerTool(
+    "desk_v2_get_containers",
+    {
+      title: "Get Desk V2 Containers",
+      description: "Reads Desk V2 root Containers, direct children of one Container, or one Container by stable ID. Supports ACTIVE and ARCHIVED lifecycle filtering for list operations. Does not read Tasks or Desk V1 and never writes data.",
+      inputSchema: getContainersInputSchema,
+      outputSchema: z.object({
+        scope: z.enum(["ROOTS", "CHILDREN", "BY_ID"]),
+        parentId: z.string().nullable(),
+        lifecycle: lifecycleSchema.nullable(),
+        count: z.number().int().nonnegative(),
+        containers: z.array(containerSchema)
+      }).strict(),
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      }
+    },
+    async (input) => result(await containerRepository.getContainers(input))
+  );
 
   server.registerTool(
     "desk_v2_capability_read",
