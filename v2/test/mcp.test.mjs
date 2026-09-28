@@ -29,16 +29,24 @@ test("client MCP ufficiale esegue handshake, discovery, read e write isolata", a
     assert.deepEqual(listed.tools.map(tool => tool.name).sort(), [
       "desk_v2_capability_read",
       "desk_v2_capability_write",
+      "desk_v2_create_container",
       "desk_v2_get_containers"
     ]);
     const readTool = listed.tools.find(tool => tool.name === "desk_v2_capability_read");
     const writeTool = listed.tools.find(tool => tool.name === "desk_v2_capability_write");
     const containersTool = listed.tools.find(tool => tool.name === "desk_v2_get_containers");
+    const createTool = listed.tools.find(tool => tool.name === "desk_v2_create_container");
     assert.equal(readTool.annotations.readOnlyHint, true);
     assert.equal(writeTool.annotations.readOnlyHint, false);
     assert.equal(writeTool.annotations.destructiveHint, false);
     assert.deepEqual(containersTool.annotations, {
       readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    });
+    assert.deepEqual(createTool.annotations, {
+      readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: true,
       openWorldHint: false
@@ -201,6 +209,175 @@ test("container read rifiuta combinazioni e proprietà non valide", async () => 
   });
 });
 
+test("container create normalizza input, crea root e child e resta coerente con READ", async () => {
+  const database = fakeDb();
+  await withClient(database, async client => {
+    const root = await callCreate(client, {
+      idempotencyKey: " root-create-001 ",
+      name: "  Root Alpha  ",
+      focus: "  Focus  ",
+      owner: "   ",
+      nextAction: null
+    });
+    assert.equal(root.replayed, false);
+    assert.match(root.container.containerId,
+      /^CTR-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    assert.deepEqual({
+      parentId: root.container.parentId,
+      name: root.container.name,
+      status: root.container.status,
+      focus: root.container.focus,
+      owner: root.container.owner,
+      nextAction: root.container.nextAction,
+      lifecycleState: root.container.lifecycleState,
+      version: root.container.version,
+      archivedAt: root.container.archivedAt
+    }, {
+      parentId: null,
+      name: "Root Alpha",
+      status: "IN_PROGRESS",
+      focus: "Focus",
+      owner: null,
+      nextAction: null,
+      lifecycleState: "ACTIVE",
+      version: 1,
+      archivedAt: null
+    });
+    assert.equal(root.container.createdAt, root.container.updatedAt);
+    assert.equal(new Date(root.container.createdAt).toISOString(), root.container.createdAt);
+
+    const child = await callCreate(client, {
+      idempotencyKey: "child-create-001",
+      name: "Child",
+      parentId: ` ${root.container.containerId} `,
+      focus: null,
+      owner: " Max ",
+      nextAction: " Review "
+    });
+    assert.equal(child.container.parentId, root.container.containerId);
+    assert.equal(child.container.owner, "Max");
+    assert.equal(child.container.nextAction, "Review");
+
+    const byId = await callContainers(client, { containerId: child.container.containerId });
+    assert.deepEqual(byId.containers[0], child.container);
+    assert.equal(database.snapshot().tasks, 0);
+  });
+});
+
+test("container create applica idempotenza, conflitto e nomi duplicati", async () => {
+  const database = fakeDb();
+  await withClient(database, async client => {
+    const input = { idempotencyKey: "same-001", name: "Duplicate" };
+    const first = await callCreate(client, input);
+    const replay = await callCreate(client, input);
+    assert.equal(first.replayed, false);
+    assert.equal(replay.replayed, true);
+    assert.deepEqual(replay.container, first.container);
+    assert.equal(database.snapshot().containers, 1);
+    assert.equal(database.snapshot().idempotency, 1);
+
+    database.updateContainer(first.container.containerId, { name: "Changed Later" });
+    const snapshotReplay = await callCreate(client, input);
+    assert.equal(snapshotReplay.container.name, "Duplicate");
+
+    const conflict = await client.callTool({
+      name: "desk_v2_create_container",
+      arguments: { idempotencyKey: "same-001", name: "Different" }
+    });
+    assert.equal(conflict.isError, true);
+    assert.equal(conflict.structuredContent.error.code, "IDEMPOTENCY_KEY_CONFLICT");
+    assert.equal(database.snapshot().containers, 1);
+
+    const second = await callCreate(client,
+      { idempotencyKey: "same-name-002", name: "Duplicate" });
+    assert.notEqual(second.container.containerId, first.container.containerId);
+    assert.equal(database.snapshot().containers, 2);
+  });
+});
+
+test("container create gestisce parent invalido e validazione strict senza side effect", async () => {
+  const database = fakeDb([
+    container({ id: "ACTIVE-PARENT", name: "Active" }),
+    container({ id: "ARCHIVED-PARENT", name: "Archived", lifecycle: "ARCHIVED" })
+  ]);
+  await withClient(database, async client => {
+    const missing = await client.callTool({
+      name: "desk_v2_create_container",
+      arguments: { idempotencyKey: "missing-parent", name: "Child", parentId: "MISSING" }
+    });
+    assert.equal(missing.structuredContent.error.code, "CONTAINER_PARENT_NOT_FOUND");
+
+    const archived = await client.callTool({
+      name: "desk_v2_create_container",
+      arguments: { idempotencyKey: "archived-parent", name: "Child", parentId: "ARCHIVED-PARENT" }
+    });
+    assert.equal(archived.structuredContent.error.code, "CONTAINER_PARENT_ARCHIVED");
+
+    for (const [arguments_, code] of [
+      [{ idempotencyKey: "bad name", name: "Valid" }, "INVALID_IDEMPOTENCY_KEY"],
+      [{ idempotencyKey: "valid-key", name: "   " }, "INVALID_NAME"],
+      [{ idempotencyKey: "valid-key", name: "Valid", parentId: "  " },
+        "INVALID_PARENT_ID"],
+      [{ idempotencyKey: "valid-key", name: "Valid", status: "DONE" }, null]
+    ]) {
+      const result = await client.callTool({
+        name: "desk_v2_create_container", arguments: arguments_
+      });
+      assert.equal(result.isError, true);
+      if (code) assert.match(result.content[0].text, new RegExp(code));
+    }
+    assert.equal(database.snapshot().containers, 2);
+    assert.equal(database.snapshot().idempotency, 0);
+  });
+});
+
+test("container create serializza richieste concorrenti sulla stessa key", async () => {
+  const database = fakeDb();
+  await withClient(database, async client => {
+    const same = await Promise.all([
+      callCreate(client, { idempotencyKey: "concurrent-same", name: "Concurrent" }),
+      callCreate(client, { idempotencyKey: "concurrent-same", name: "Concurrent" })
+    ]);
+    assert.deepEqual(same.map(result => result.replayed).sort(), [false, true]);
+    assert.equal(database.snapshot().containers, 1);
+
+    const different = await Promise.all([
+      client.callTool({ name: "desk_v2_create_container", arguments: {
+        idempotencyKey: "concurrent-different", name: "Winner A"
+      } }),
+      client.callTool({ name: "desk_v2_create_container", arguments: {
+        idempotencyKey: "concurrent-different", name: "Winner B"
+      } })
+    ]);
+    assert.equal(different.filter(result => result.isError === true).length, 1);
+    assert.equal(different.filter(result => result.isError !== true).length, 1);
+    assert.equal(different.find(result => result.isError === true)
+      .structuredContent.error.code, "IDEMPOTENCY_KEY_CONFLICT");
+    assert.equal(database.snapshot().containers, 2);
+  });
+});
+
+test("container create rollbacka la key su collisione e consente retry", async () => {
+  const database = fakeDb([], { collideNextCreate: true });
+  await withClient(database, async client => {
+    const collision = await client.callTool({
+      name: "desk_v2_create_container",
+      arguments: { idempotencyKey: "collision-retry", name: "Collision" }
+    });
+    assert.equal(collision.isError, true);
+    assert.equal(collision.structuredContent.error.code, "CONTAINER_ID_COLLISION");
+    assert.equal(collision.structuredContent.error.retryable, true);
+    assert.equal(database.snapshot().containers, 0);
+    assert.equal(database.snapshot().idempotency, 0);
+
+    const retry = await callCreate(client,
+      { idempotencyKey: "collision-retry", name: "Collision" });
+    assert.equal(retry.replayed, false);
+    assert.equal(database.snapshot().containers, 1);
+    assert.equal(database.snapshot().idempotency, 1);
+  });
+});
+
 function request(body, token) {
   const headers = { "content-type": "application/json", accept: "application/json, text/event-stream" };
   if (token) headers.authorization = `Bearer ${token}`;
@@ -243,6 +420,12 @@ async function callContainers(client, args) {
   return result.structuredContent;
 }
 
+async function callCreate(client, args) {
+  const result = await client.callTool({ name: "desk_v2_create_container", arguments: args });
+  assert.notEqual(result.isError, true, JSON.stringify(result.structuredContent));
+  return result.structuredContent;
+}
+
 function container({ id, parentId = null, name, lifecycle = "ACTIVE", focus = null,
   owner = null, nextAction = null }) {
   return {
@@ -261,21 +444,35 @@ function container({ id, parentId = null, name, lifecycle = "ACTIVE", focus = nu
   };
 }
 
-function fakeDb(containers = []) {
-  const state = { containers: structuredClone(containers), tasks: 0, markers: [] };
+function fakeDb(containers = [], options = {}) {
+  const state = {
+    containers: structuredClone(containers), tasks: 0, markers: [], idempotency: []
+  };
   const audit = { containerQueries: 0, taskQueries: 0, writes: 0 };
-  return {
+  let collideNextCreate = options.collideNextCreate === true;
+  let collidedId = null;
+  const database = {
     prepare(sql) {
       let values = [];
       if (/\bFROM\s+containers\b/i.test(sql)) audit.containerQueries += 1;
       if (/\bFROM\s+tasks\b/i.test(sql)) audit.taskQueries += 1;
       const statement = {
         bind(...bound) { values = bound; return statement; },
+        _sql: sql,
+        _values() { return values; },
         async first() {
           if (/COUNT\(\*\).*containers/i.test(sql)) return { count: state.containers.length };
           if (/COUNT\(\*\).*tasks/i.test(sql)) return { count: state.tasks };
           if (/FROM mcp_capability_test WHERE id/i.test(sql)) {
             return state.markers.find(row => row.id === Number(values[0])) || null;
+          }
+          if (/SELECT container_id FROM containers WHERE container_id/i.test(sql)) {
+            if (values[0] === collidedId) return { container_id: values[0] };
+            return state.containers.find(row => row.container_id === values[0]) || null;
+          }
+          if (/SELECT lifecycle_state FROM containers WHERE container_id/i.test(sql)) {
+            const row = state.containers.find(item => item.container_id === values[0]);
+            return row ? { lifecycle_state: row.lifecycle_state } : null;
           }
           throw new Error(`unexpected first query: ${sql}`);
         },
@@ -322,13 +519,96 @@ function fakeDb(containers = []) {
       };
       return statement;
     },
+    async batch(statements) {
+      const before = structuredClone(state);
+      try {
+        const acquireValues = statements[0]._values();
+        const [operation, key, hash, attemptId, resourceType, resourceId,
+          responseJson, completedAt, parentId] = acquireValues;
+        const existing = state.idempotency.find(row => (
+          row.operation === operation && row.idempotency_key === key
+        ));
+        const parent = parentId === null
+          ? null : state.containers.find(row => row.container_id === parentId);
+        if (!existing && (parentId === null || parent?.lifecycle_state === "ACTIVE")) {
+          state.idempotency.push({
+            operation, idempotency_key: key, request_hash: hash, attempt_id: attemptId,
+            resource_type: resourceType, resource_id: resourceId,
+            response_json: responseJson, completed_at: completedAt
+          });
+        }
+
+        const acquired = state.idempotency.find(row => (
+          row.operation === operation && row.idempotency_key === key &&
+          row.request_hash === hash && row.attempt_id === attemptId
+        ));
+        if (acquired) {
+          if (collideNextCreate || state.containers.some(row => row.container_id === resourceId)) {
+            collideNextCreate = false;
+            collidedId = resourceId;
+            throw new Error("synthetic primary key collision");
+          }
+          const response = JSON.parse(responseJson);
+          const value = response.container;
+          state.containers.push({
+            container_id: value.containerId,
+            parent_id: value.parentId,
+            name: value.name,
+            status: value.status,
+            focus: value.focus,
+            owner: value.owner,
+            next_action: value.nextAction,
+            lifecycle_state: value.lifecycleState,
+            version: value.version,
+            created_at: value.createdAt,
+            updated_at: value.updatedAt,
+            archived_at: value.archivedAt
+          });
+          audit.writes += 2;
+        }
+
+        const record = state.idempotency.find(row => (
+          row.operation === operation && row.idempotency_key === key
+        ));
+        let outcome = "UNEXPECTED_STATE";
+        if (record && record.request_hash !== hash) outcome = "IDEMPOTENCY_CONFLICT";
+        else if (record && record.attempt_id === attemptId) outcome = "CREATED";
+        else if (record && record.request_hash === hash) outcome = "REPLAY";
+        else if (parentId !== null && !parent) outcome = "PARENT_NOT_FOUND";
+        else if (parentId !== null && parent.lifecycle_state === "ARCHIVED") {
+          outcome = "PARENT_ARCHIVED";
+        }
+        return [{ success: true }, { success: true }, {
+          success: true,
+          results: [{ outcome, response_json: record?.response_json ?? null }]
+        }];
+      } catch (error) {
+        state.containers = before.containers;
+        state.tasks = before.tasks;
+        state.markers = before.markers;
+        state.idempotency = before.idempotency;
+        throw error;
+      }
+    },
     snapshot() {
       return {
         containers: state.containers.length,
         tasks: state.tasks,
-        markers: structuredClone(state.markers)
+        markers: structuredClone(state.markers),
+        idempotency: state.idempotency.length
       };
+    },
+    updateContainer(containerId, changes) {
+      const row = state.containers.find(item => item.container_id === containerId);
+      Object.assign(row, Object.fromEntries(Object.entries(changes).map(([key, value]) => [
+        key === "containerId" ? "container_id"
+          : key === "parentId" ? "parent_id"
+            : key === "nextAction" ? "next_action"
+              : key === "lifecycleState" ? "lifecycle_state" : key,
+        value
+      ])));
     },
     audit() { return { ...audit }; }
   };
+  return database;
 }

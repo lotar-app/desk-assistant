@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { CapabilityRepository } from "./capability-repository.mjs";
-import { ContainerRepository } from "./container-repository.mjs";
+import { ContainerDomainError, ContainerRepository } from "./container-repository.mjs";
 
 const markerSchema = z.string()
   .min(1)
@@ -36,10 +36,73 @@ const containerSchema = z.object({
   archivedAt: z.string().nullable()
 }).strict();
 
+const idempotencyKeySchema = z.string({ error: "INVALID_IDEMPOTENCY_KEY" })
+  .transform(value => value.trim())
+  .pipe(z.string().min(1, "INVALID_IDEMPOTENCY_KEY")
+    .max(64, "INVALID_IDEMPOTENCY_KEY")
+    .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/, "INVALID_IDEMPOTENCY_KEY"));
+const requiredNameSchema = z.string({ error: "INVALID_NAME" })
+  .transform(value => value.trim())
+  .pipe(z.string().min(1, "INVALID_NAME"));
+const createParentIdSchema = z.string({ error: "INVALID_PARENT_ID" })
+  .transform(value => value.trim())
+  .pipe(z.string().min(1, "INVALID_PARENT_ID"));
+const optionalTextSchema = z.string().nullable().optional()
+  .transform(value => {
+    if (value === undefined || value === null) return null;
+    const normalized = value.trim();
+    return normalized || null;
+  });
+const createContainerInputSchema = z.object({
+  idempotencyKey: idempotencyKeySchema,
+  name: requiredNameSchema,
+  parentId: createParentIdSchema.nullable().optional().transform(value => value ?? null),
+  focus: optionalTextSchema,
+  owner: optionalTextSchema,
+  nextAction: optionalTextSchema
+}).strict();
+const createContainerOutputSchema = z.object({
+  replayed: z.boolean(),
+  container: containerSchema
+}).strict();
+const toolErrorSchema = z.object({
+  error: z.object({
+    code: z.string(),
+    message: z.string(),
+    retryable: z.boolean()
+  }).strict()
+}).strict();
+
 export function createDeskMcpServer(env) {
   const server = new McpServer({ name: "desk-v2-capability-test", version: "0.1.0" });
   const repository = new CapabilityRepository(env.DESK_V2_DB);
   const containerRepository = new ContainerRepository(env.DESK_V2_DB);
+
+  server.registerTool(
+    "desk_v2_create_container",
+    {
+      title: "Create Desk V2 Container",
+      description: "Creates one active Desk V2 Container as a root or direct child. Requires an idempotency key and never creates Tasks or modifies Desk V1.",
+      inputSchema: createContainerInputSchema,
+      outputSchema: z.union([createContainerOutputSchema, toolErrorSchema]),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      }
+    },
+    async input => {
+      try {
+        return result(await containerRepository.createContainer(input));
+      } catch (error) {
+        if (error instanceof ContainerDomainError) {
+          return errorResult(error.code, error.message, error.retryable);
+        }
+        return errorResult("D1_OPERATION_FAILED", "The Container could not be created.", true);
+      }
+    }
+  );
 
   server.registerTool(
     "desk_v2_get_containers",
@@ -115,6 +178,15 @@ export function createDeskMcpServer(env) {
 
 function result(value) {
   return {
+    content: [{ type: "text", text: JSON.stringify(value) }],
+    structuredContent: value
+  };
+}
+
+function errorResult(code, message, retryable) {
+  const value = { error: { code, message, retryable } };
+  return {
+    isError: true,
     content: [{ type: "text", text: JSON.stringify(value) }],
     structuredContent: value
   };

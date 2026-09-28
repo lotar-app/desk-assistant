@@ -27,11 +27,13 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
 
     assertQuery("SELECT count(*) AS value FROM d1_migrations WHERE name = '0001_foundation.sql';", /value[^0-9]*1/i);
     assertQuery("SELECT count(*) AS value FROM d1_migrations WHERE name = '0002_mcp_capability_test.sql';", /value[^0-9]*1/i);
+    assertQuery("SELECT count(*) AS value FROM d1_migrations WHERE name = '0003_container_create_idempotency.sql';", /value[^0-9]*1/i);
     assertQuery("SELECT value FROM system_metadata WHERE key = 'system_name';", /desk-v2/i);
     assertQuery("SELECT value FROM system_metadata WHERE key = 'environment';", /v2-development/i);
     assertQuery("PRAGMA foreign_keys;", /foreign_keys[^0-9]*1/i);
     assertQuery(`SELECT count(*) AS value FROM sqlite_master WHERE type = 'table'
-      AND name IN ('system_metadata','containers','tasks','d1_migrations','mcp_capability_test');`, /value[^0-9]*5/i);
+      AND name IN ('system_metadata','containers','tasks','d1_migrations','mcp_capability_test',
+        'mcp_idempotency');`, /value[^0-9]*6/i);
     assertQuery("SELECT count(*) AS value FROM mcp_capability_test;", /value[^0-9]*0/i);
 
     execute(`INSERT INTO containers
@@ -42,6 +44,11 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
       (container_id,parent_id,name,status,lifecycle_state,version,created_at,updated_at)
       VALUES ('FIXTURE-CHILD','FIXTURE-ROOT','Fixture Child','IN_PROGRESS','ACTIVE',1,
       '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z');`);
+    execute(`INSERT INTO containers
+      (container_id,parent_id,name,status,lifecycle_state,version,created_at,updated_at,archived_at)
+      VALUES ('FIXTURE-ARCHIVED-PARENT',NULL,'Archived Parent','IN_PROGRESS','ARCHIVED',1,
+      '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z',
+      '2026-01-02T00:00:00.000Z');`);
     assertQuery("SELECT parent_id FROM containers WHERE container_id='FIXTURE-CHILD';", /FIXTURE-ROOT/);
 
     expectSqlFailure(`INSERT INTO containers
@@ -62,6 +69,15 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
       (container_id,parent_id,name,status,lifecycle_state,version,created_at,updated_at,archived_at)
       VALUES ('FIXTURE-BAD-LIFECYCLE',NULL,'Bad Lifecycle','IN_PROGRESS','ARCHIVED',1,
       '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z',NULL);`, /CHECK constraint/i);
+    expectSqlFailure(`INSERT INTO containers
+      (container_id,parent_id,name,status,lifecycle_state,version,created_at,updated_at)
+      VALUES ('FIXTURE-ACTIVE-UNDER-ARCHIVED','FIXTURE-ARCHIVED-PARENT','Rejected',
+      'IN_PROGRESS','ACTIVE',1,'2026-01-01T00:00:00.000Z',
+      '2026-01-01T00:00:00.000Z');`, /CONTAINER_PARENT_ARCHIVED/);
+    execute("UPDATE containers SET parent_id='FIXTURE-ARCHIVED-PARENT' WHERE container_id='FIXTURE-CHILD';");
+    assertQuery("SELECT parent_id FROM containers WHERE container_id='FIXTURE-CHILD';",
+      /FIXTURE-ARCHIVED-PARENT/);
+    execute("UPDATE containers SET parent_id='FIXTURE-ROOT' WHERE container_id='FIXTURE-CHILD';");
 
     execute(`INSERT INTO tasks
       (task_id,container_id,title,status,lifecycle_state,version,created_at,updated_at)
@@ -104,8 +120,9 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
     await client.connect(transport);
     try {
       const tools = await client.listTools();
-      assert.equal(tools.tools.length, 3);
+      assert.equal(tools.tools.length, 4);
       assert.ok(tools.tools.some(tool => tool.name === "desk_v2_get_containers"));
+      assert.ok(tools.tools.some(tool => tool.name === "desk_v2_create_container"));
 
       const roots = await client.callTool({
         name: "desk_v2_get_containers",
@@ -133,7 +150,7 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
       assert.equal(byId.structuredContent.lifecycle, null);
 
       const read = await client.callTool({ name: "desk_v2_capability_read", arguments: {} });
-      assert.equal(read.structuredContent.containerCount, 2);
+      assert.equal(read.structuredContent.containerCount, 3);
       assert.equal(read.structuredContent.taskCount, 1);
       const write = await client.callTool({
         name: "desk_v2_capability_write",
@@ -143,6 +160,104 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
       assertQuery("SELECT COUNT(*) AS value FROM mcp_capability_test;", /value[^0-9]*1/i);
       execute("DELETE FROM mcp_capability_test WHERE marker='CODEX-LOCAL-D1-CAPABILITY';");
       assertQuery("SELECT COUNT(*) AS value FROM mcp_capability_test;", /value[^0-9]*0/i);
+
+      const createInput = {
+        idempotencyKey: "foundation-create-001",
+        name: " Foundation Root ",
+        focus: " Local only ",
+        owner: null,
+        nextAction: " Verify replay "
+      };
+      const created = await client.callTool({
+        name: "desk_v2_create_container", arguments: createInput
+      });
+      assert.notEqual(created.isError, true);
+      assert.equal(created.structuredContent.replayed, false);
+      assert.equal(created.structuredContent.container.name, "Foundation Root");
+      assert.equal(created.structuredContent.container.status, "IN_PROGRESS");
+      assert.equal(created.structuredContent.container.lifecycleState, "ACTIVE");
+      assert.equal(created.structuredContent.container.version, 1);
+      assert.equal(created.structuredContent.container.archivedAt, null);
+      assert.equal(created.structuredContent.container.createdAt,
+        created.structuredContent.container.updatedAt);
+      assert.match(created.structuredContent.container.containerId, /^CTR-[0-9a-f-]{36}$/i);
+
+      const replay = await client.callTool({
+        name: "desk_v2_create_container", arguments: createInput
+      });
+      assert.equal(replay.structuredContent.replayed, true);
+      assert.deepEqual(replay.structuredContent.container, created.structuredContent.container);
+
+      const conflict = await client.callTool({
+        name: "desk_v2_create_container",
+        arguments: { ...createInput, name: "Different" }
+      });
+      assert.equal(conflict.isError, true);
+      assert.equal(conflict.structuredContent.error.code, "IDEMPOTENCY_KEY_CONFLICT");
+
+      const archivedParent = await client.callTool({
+        name: "desk_v2_create_container",
+        arguments: { idempotencyKey: "foundation-archived-parent", name: "Rejected",
+          parentId: "FIXTURE-ARCHIVED-PARENT" }
+      });
+      assert.equal(archivedParent.structuredContent.error.code, "CONTAINER_PARENT_ARCHIVED");
+      const missingParent = await client.callTool({
+        name: "desk_v2_create_container",
+        arguments: { idempotencyKey: "foundation-missing-parent", name: "Rejected",
+          parentId: "FIXTURE-MISSING" }
+      });
+      assert.equal(missingParent.structuredContent.error.code, "CONTAINER_PARENT_NOT_FOUND");
+
+      const child = await client.callTool({
+        name: "desk_v2_create_container",
+        arguments: { idempotencyKey: "foundation-child-001", name: "Child",
+          parentId: created.structuredContent.container.containerId }
+      });
+      assert.equal(child.structuredContent.container.parentId,
+        created.structuredContent.container.containerId);
+
+      const concurrent = await Promise.all([
+        client.callTool({ name: "desk_v2_create_container", arguments: {
+          idempotencyKey: "foundation-concurrent", name: "Concurrent"
+        } }),
+        client.callTool({ name: "desk_v2_create_container", arguments: {
+          idempotencyKey: "foundation-concurrent", name: "Concurrent"
+        } })
+      ]);
+      assert.deepEqual(concurrent.map(item => item.structuredContent.replayed).sort(),
+        [false, true]);
+      assertQuery("SELECT COUNT(*) AS value FROM containers WHERE name='Concurrent';",
+        /value[^0-9]*1/i);
+
+      const conflicting = await Promise.all([
+        client.callTool({ name: "desk_v2_create_container", arguments: {
+          idempotencyKey: "foundation-concurrent-conflict", name: "Conflict A"
+        } }),
+        client.callTool({ name: "desk_v2_create_container", arguments: {
+          idempotencyKey: "foundation-concurrent-conflict", name: "Conflict B"
+        } })
+      ]);
+      assert.equal(conflicting.filter(item => item.isError === true).length, 1);
+      assert.equal(conflicting.filter(item => item.isError !== true).length, 1);
+      assert.equal(conflicting.find(item => item.isError === true)
+        .structuredContent.error.code, "IDEMPOTENCY_KEY_CONFLICT");
+      assertQuery(`SELECT COUNT(*) AS value FROM containers
+        WHERE name IN ('Conflict A','Conflict B');`, /value[^0-9]*1/i);
+
+      const duplicateNames = await Promise.all([
+        client.callTool({ name: "desk_v2_create_container", arguments: {
+          idempotencyKey: "foundation-duplicate-name-a", name: "Allowed Duplicate"
+        } }),
+        client.callTool({ name: "desk_v2_create_container", arguments: {
+          idempotencyKey: "foundation-duplicate-name-b", name: "Allowed Duplicate"
+        } })
+      ]);
+      assert.equal(duplicateNames.every(item => item.isError !== true), true);
+      assert.notEqual(duplicateNames[0].structuredContent.container.containerId,
+        duplicateNames[1].structuredContent.container.containerId);
+      assertQuery("SELECT COUNT(*) AS value FROM containers WHERE name='Allowed Duplicate';",
+        /value[^0-9]*2/i);
+      assertQuery("SELECT COUNT(*) AS value FROM tasks;", /value[^0-9]*1/i);
     } finally {
       await client.close();
     }
@@ -168,16 +283,22 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
   }
 });
 
-test("migration MCP si applica sopra 0001 senza modificarla", () => {
+test("migration chain 0001, 0002 e 0003 si applica senza modificare le precedenti", () => {
   const persistence = fs.mkdtempSync(path.join(os.tmpdir(), "desk-v2-staged-"));
   try {
     command(["d1", "execute", "DESK_V2_DB", "--local", "--persist-to",
       persistence, "--file", path.join(root, "migrations", "0001_foundation.sql")]);
     command(["d1", "execute", "DESK_V2_DB", "--local", "--persist-to",
       persistence, "--file", path.join(root, "migrations", "0002_mcp_capability_test.sql")]);
+    command(["d1", "execute", "DESK_V2_DB", "--local", "--persist-to",
+      persistence, "--file", path.join(root, "migrations", "0003_container_create_idempotency.sql")]);
     const result = command(["d1", "execute", "DESK_V2_DB", "--local", "--persist-to",
       persistence, "--command", "SELECT COUNT(*) AS value FROM mcp_capability_test;"]);
     assert.match(result, /value[^0-9]*0/i);
+    const idempotency = command(["d1", "execute", "DESK_V2_DB", "--local",
+      "--persist-to", persistence, "--command",
+      "SELECT COUNT(*) AS value FROM mcp_idempotency;"]);
+    assert.match(idempotency, /value[^0-9]*0/i);
   } finally {
     fs.rmSync(persistence, { recursive: true, force: true });
   }
