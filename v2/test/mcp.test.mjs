@@ -30,12 +30,14 @@ test("client MCP ufficiale esegue handshake, discovery, read e write isolata", a
       "desk_v2_capability_read",
       "desk_v2_capability_write",
       "desk_v2_create_container",
-      "desk_v2_get_containers"
+      "desk_v2_get_containers",
+      "desk_v2_move_container"
     ]);
     const readTool = listed.tools.find(tool => tool.name === "desk_v2_capability_read");
     const writeTool = listed.tools.find(tool => tool.name === "desk_v2_capability_write");
     const containersTool = listed.tools.find(tool => tool.name === "desk_v2_get_containers");
     const createTool = listed.tools.find(tool => tool.name === "desk_v2_create_container");
+    const moveTool = listed.tools.find(tool => tool.name === "desk_v2_move_container");
     assert.equal(readTool.annotations.readOnlyHint, true);
     assert.equal(writeTool.annotations.readOnlyHint, false);
     assert.equal(writeTool.annotations.destructiveHint, false);
@@ -46,6 +48,12 @@ test("client MCP ufficiale esegue handshake, discovery, read e write isolata", a
       openWorldHint: false
     });
     assert.deepEqual(createTool.annotations, {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    });
+    assert.deepEqual(moveTool.annotations, {
       readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: true,
@@ -378,6 +386,199 @@ test("container create rollbacka la key su collisione e consente retry", async (
   });
 });
 
+test("container move valida schema strict e accetta ID legacy", async () => {
+  const database = fakeDb([
+    container({ id: "LEGACY ROOT", name: "Legacy Root" }),
+    container({ id: "LEGACY CHILD", name: "Legacy Child" })
+  ]);
+  await withClient(database, async client => {
+    const invalidInputs = [
+      [{}, null],
+      [{ idempotencyKey: "move", containerId: "LEGACY CHILD", expectedVersion: 1 },
+        "INVALID_NEW_PARENT_ID"],
+      [{ idempotencyKey: "move", newParentId: null, expectedVersion: 1 },
+        "INVALID_CONTAINER_ID"],
+      [{ idempotencyKey: "move", containerId: "LEGACY CHILD", newParentId: null },
+        "INVALID_EXPECTED_VERSION"],
+      { idempotencyKey: "move", containerId: "LEGACY CHILD", newParentId: null,
+        expectedVersion: "1" },
+      { idempotencyKey: "move", containerId: " ", newParentId: null,
+        expectedVersion: 1 },
+      { idempotencyKey: "move", containerId: "LEGACY CHILD", newParentId: " ",
+        expectedVersion: 1 },
+      { idempotencyKey: "move", containerId: "LEGACY CHILD", newParentId: null,
+        expectedVersion: 1, extra: true }
+    ].map(entry => Array.isArray(entry) ? entry : [entry,
+      typeof entry.expectedVersion === "string" ? "INVALID_EXPECTED_VERSION"
+        : entry.containerId?.trim() === "" ? "INVALID_CONTAINER_ID"
+          : entry.newParentId?.trim() === "" ? "INVALID_NEW_PARENT_ID" : null]);
+    for (const [arguments_, code] of invalidInputs) {
+      const result = await client.callTool({ name: "desk_v2_move_container", arguments: arguments_ });
+      assert.equal(result.isError, true, JSON.stringify(arguments_));
+      if (code) assert.match(result.content[0].text, new RegExp(code));
+    }
+    const moved = await callMove(client, {
+      idempotencyKey: " legacy-move ", containerId: " LEGACY CHILD ",
+      newParentId: " LEGACY ROOT ", expectedVersion: 1
+    });
+    assert.equal(moved.container.containerId, "LEGACY CHILD");
+    assert.equal(moved.container.parentId, "LEGACY ROOT");
+  });
+});
+
+test("container move copre root-child, child-root, altro parent e preserva dominio", async () => {
+  const database = fakeDb([
+    container({ id: "ROOT-A", name: "Root A" }),
+    container({ id: "ROOT-B", name: "Root B" }),
+    container({ id: "CHILD", parentId: null, name: "Child", focus: "Focus",
+      owner: "Owner", nextAction: "Next" }),
+    container({ id: "GRANDCHILD", parentId: "CHILD", name: "Grandchild" })
+  ]);
+  await withClient(database, async client => {
+    const original = database.getContainer("CHILD");
+    const toA = await callMove(client, {
+      idempotencyKey: "move-to-a", containerId: "CHILD", newParentId: "ROOT-A",
+      expectedVersion: 1
+    });
+    assert.equal(toA.replayed, false);
+    assert.equal(toA.changed, true);
+    assert.equal(toA.container.parentId, "ROOT-A");
+    assert.equal(toA.container.version, 2);
+    assert.notEqual(toA.container.updatedAt, original.updated_at);
+    assert.equal(toA.container.createdAt, original.created_at);
+    assert.deepEqual({ name: toA.container.name, status: toA.container.status,
+      focus: toA.container.focus, owner: toA.container.owner,
+      nextAction: toA.container.nextAction, lifecycleState: toA.container.lifecycleState },
+    { name: original.name, status: original.status, focus: original.focus,
+      owner: original.owner, nextAction: original.next_action,
+      lifecycleState: original.lifecycle_state });
+    assert.equal(database.getContainer("GRANDCHILD").parent_id, "CHILD");
+
+    const toRoot = await callMove(client, {
+      idempotencyKey: "move-root", containerId: "CHILD", newParentId: null,
+      expectedVersion: 2
+    });
+    assert.equal(toRoot.container.parentId, null);
+    assert.equal(toRoot.container.version, 3);
+
+    const toB = await callMove(client, {
+      idempotencyKey: "move-to-b", containerId: "CHILD", newParentId: "ROOT-B",
+      expectedVersion: 3
+    });
+    assert.equal(toB.container.parentId, "ROOT-B");
+    assert.equal(toB.container.version, 4);
+    assert.equal(database.getContainer("GRANDCHILD").parent_id, "CHILD");
+    assert.equal(database.snapshot().tasks, 0);
+  });
+});
+
+test("container move classifica lifecycle, parent, self, cycle e version", async () => {
+  const database = fakeDb([
+    container({ id: "ROOT", name: "Root" }),
+    container({ id: "CHILD", parentId: "ROOT", name: "Child" }),
+    container({ id: "GRANDCHILD", parentId: "CHILD", name: "Grandchild" }),
+    container({ id: "ARCHIVED", name: "Archived", lifecycle: "ARCHIVED" })
+  ]);
+  await withClient(database, async client => {
+    const cases = [
+      ["missing", "MISSING", null, 1, "CONTAINER_NOT_FOUND"],
+      ["archived", "ARCHIVED", null, 1, "CONTAINER_ARCHIVED"],
+      ["version", "CHILD", null, 2, "CONTAINER_VERSION_CONFLICT"],
+      ["self", "CHILD", "CHILD", 1, "CONTAINER_SELF_PARENT"],
+      ["parent-missing", "CHILD", "MISSING", 1, "CONTAINER_PARENT_NOT_FOUND"],
+      ["parent-archived", "CHILD", "ARCHIVED", 1, "CONTAINER_PARENT_ARCHIVED"],
+      ["cycle", "ROOT", "GRANDCHILD", 1, "CONTAINER_CYCLE"]
+    ];
+    for (const [key, containerId, newParentId, expectedVersion, code] of cases) {
+      const result = await client.callTool({ name: "desk_v2_move_container", arguments: {
+        idempotencyKey: key, containerId, newParentId, expectedVersion
+      } });
+      assert.equal(result.isError, true);
+      assert.equal(result.structuredContent.error.code, code);
+      assert.equal(result.structuredContent.error.retryable, false);
+    }
+    assert.equal(database.getContainer("ROOT").parent_id, null);
+    assert.equal(database.snapshot().idempotency, 0);
+  });
+});
+
+test("container move gestisce no-op, replay, conflict e snapshot storico", async () => {
+  const database = fakeDb([
+    container({ id: "ROOT", name: "Root" }),
+    container({ id: "CHILD", parentId: "ROOT", name: "Child" })
+  ]);
+  await withClient(database, async client => {
+    const noOpInput = { idempotencyKey: "noop", containerId: "CHILD",
+      newParentId: "ROOT", expectedVersion: 1 };
+    const noOp = await callMove(client, noOpInput);
+    assert.equal(noOp.changed, false);
+    assert.equal(noOp.container.version, 1);
+    assert.equal(noOp.container.updatedAt, "2026-09-25T08:00:00.000Z");
+    const noOpReplay = await callMove(client, noOpInput);
+    assert.equal(noOpReplay.replayed, true);
+    assert.deepEqual(noOpReplay.container, noOp.container);
+
+    const moveInput = { idempotencyKey: "historical", containerId: "CHILD",
+      newParentId: null, expectedVersion: 1 };
+    const moved = await callMove(client, moveInput);
+    database.updateContainer("CHILD", { parentId: "ROOT", version: 3,
+      updatedAt: "2026-09-26T00:00:00.000Z", lifecycleState: "ARCHIVED",
+      archivedAt: "2026-09-26T00:00:00.000Z" });
+    const replay = await callMove(client, moveInput);
+    assert.equal(replay.replayed, true);
+    assert.deepEqual(replay.container, moved.container);
+    assert.equal(database.getContainer("CHILD").parent_id, "ROOT");
+    assert.equal(database.getContainer("CHILD").version, 3);
+
+    const conflict = await client.callTool({ name: "desk_v2_move_container", arguments: {
+      ...moveInput, newParentId: "ROOT"
+    } });
+    assert.equal(conflict.isError, true);
+    assert.equal(conflict.structuredContent.error.code, "IDEMPOTENCY_KEY_CONFLICT");
+  });
+});
+
+test("container move serializza concorrenza e sanitizza rollback D1", async () => {
+  const database = fakeDb([
+    container({ id: "ROOT-A", name: "Root A" }),
+    container({ id: "ROOT-B", name: "Root B" }),
+    container({ id: "CHILD", name: "Child" })
+  ]);
+  await withClient(database, async client => {
+    const different = await Promise.all([
+      client.callTool({ name: "desk_v2_move_container", arguments: {
+        idempotencyKey: "key-a", containerId: "CHILD", newParentId: "ROOT-A",
+        expectedVersion: 1
+      } }),
+      client.callTool({ name: "desk_v2_move_container", arguments: {
+        idempotencyKey: "key-b", containerId: "CHILD", newParentId: "ROOT-B",
+        expectedVersion: 1
+      } })
+    ]);
+    assert.equal(different.filter(result => result.isError !== true).length, 1);
+    assert.equal(different.find(result => result.isError === true)
+      .structuredContent.error.code, "CONTAINER_VERSION_CONFLICT");
+    assert.equal(database.getContainer("CHILD").version, 2);
+    assert.equal(database.snapshot().idempotency, 1);
+  });
+
+  const failing = fakeDb([
+    container({ id: "ROOT", name: "Root" }), container({ id: "CHILD", name: "Child" })
+  ], { failNextMoveBatch: true });
+  await withClient(failing, async client => {
+    const failed = await client.callTool({ name: "desk_v2_move_container", arguments: {
+      idempotencyKey: "rollback", containerId: "CHILD", newParentId: "ROOT",
+      expectedVersion: 1
+    } });
+    assert.equal(failed.isError, true);
+    assert.equal(failed.structuredContent.error.code, "D1_OPERATION_FAILED");
+    assert.equal(failed.structuredContent.error.retryable, true);
+    assert.equal(failing.getContainer("CHILD").parent_id, null);
+    assert.equal(failing.getContainer("CHILD").version, 1);
+    assert.equal(failing.snapshot().idempotency, 0);
+  });
+});
+
 function request(body, token) {
   const headers = { "content-type": "application/json", accept: "application/json, text/event-stream" };
   if (token) headers.authorization = `Bearer ${token}`;
@@ -426,6 +627,12 @@ async function callCreate(client, args) {
   return result.structuredContent;
 }
 
+async function callMove(client, args) {
+  const result = await client.callTool({ name: "desk_v2_move_container", arguments: args });
+  assert.notEqual(result.isError, true, JSON.stringify(result.structuredContent));
+  return result.structuredContent;
+}
+
 function container({ id, parentId = null, name, lifecycle = "ACTIVE", focus = null,
   owner = null, nextAction = null }) {
   return {
@@ -450,6 +657,7 @@ function fakeDb(containers = [], options = {}) {
   };
   const audit = { containerQueries: 0, taskQueries: 0, writes: 0 };
   let collideNextCreate = options.collideNextCreate === true;
+  let failNextMoveBatch = options.failNextMoveBatch === true;
   let collidedId = null;
   const database = {
     prepare(sql) {
@@ -466,6 +674,14 @@ function fakeDb(containers = [], options = {}) {
           if (/FROM mcp_capability_test WHERE id/i.test(sql)) {
             return state.markers.find(row => row.id === Number(values[0])) || null;
           }
+          if (/FROM mcp_idempotency/i.test(sql)) {
+            return structuredClone(state.idempotency.find(row => (
+              row.operation === values[0] && row.idempotency_key === values[1]
+            )) || null);
+          }
+          if (/WITH RECURSIVE descendants/i.test(sql)) {
+            return isDescendant(state.containers, values[0], values[1]) ? { found: 1 } : null;
+          }
           if (/SELECT container_id FROM containers WHERE container_id/i.test(sql)) {
             if (values[0] === collidedId) return { container_id: values[0] };
             return state.containers.find(row => row.container_id === values[0]) || null;
@@ -474,9 +690,16 @@ function fakeDb(containers = [], options = {}) {
             const row = state.containers.find(item => item.container_id === values[0]);
             return row ? { lifecycle_state: row.lifecycle_state } : null;
           }
+          if (/SELECT[\s\S]+FROM containers[\s\S]+WHERE container_id = \?/i.test(sql)) {
+            return structuredClone(state.containers.find(row => row.container_id === values[0]) || null);
+          }
           throw new Error(`unexpected first query: ${sql}`);
         },
         async all() {
+          if (/WITH RECURSIVE descendants/i.test(sql)) {
+            return { results: isDescendant(state.containers, values[0], values[1])
+              ? [{ found: 1 }] : [] };
+          }
           if (!/^\s*SELECT\b/i.test(sql) || !/\bFROM\s+containers\b/i.test(sql)) {
             throw new Error(`unexpected container query: ${sql}`);
           }
@@ -525,6 +748,12 @@ function fakeDb(containers = [], options = {}) {
         const acquireValues = statements[0]._values();
         const [operation, key, hash, attemptId, resourceType, resourceId,
           responseJson, completedAt, parentId] = acquireValues;
+        if (operation === "desk_v2_move_container") {
+          return moveBatch({ statements, state, audit, before, options: {
+            get failNextMoveBatch() { return failNextMoveBatch; },
+            clearFailure() { failNextMoveBatch = false; }
+          } });
+        }
         const existing = state.idempotency.find(row => (
           row.operation === operation && row.idempotency_key === key
         ));
@@ -608,7 +837,87 @@ function fakeDb(containers = [], options = {}) {
         value
       ])));
     },
+    getContainer(containerId) {
+      return structuredClone(state.containers.find(row => row.container_id === containerId) || null);
+    },
     audit() { return { ...audit }; }
   };
   return database;
+}
+
+function moveBatch({ statements, state, audit, before, options }) {
+  try {
+    const values = statements[0]._values();
+    const [operation, key, hash, attemptId, resourceType, resourceId,
+      responseJson, completedAt, sourceId, expectedVersion, newParentId] = values;
+    const existing = state.idempotency.find(row => (
+      row.operation === operation && row.idempotency_key === key
+    ));
+    const source = state.containers.find(row => row.container_id === sourceId);
+    const parent = newParentId === null ? null
+      : state.containers.find(row => row.container_id === newParentId);
+    const valid = source?.lifecycle_state === "ACTIVE"
+      && source.version === expectedVersion
+      && newParentId !== sourceId
+      && (newParentId === null || parent?.lifecycle_state === "ACTIVE")
+      && (newParentId === null || !isDescendant(state.containers, sourceId, newParentId));
+    if (!existing && valid) {
+      state.idempotency.push({ operation, idempotency_key: key, request_hash: hash,
+        attempt_id: attemptId, resource_type: resourceType, resource_id: resourceId,
+        response_json: responseJson, completed_at: completedAt });
+    }
+    const acquired = state.idempotency.find(row => row.operation === operation
+      && row.idempotency_key === key && row.request_hash === hash
+      && row.attempt_id === attemptId);
+    if (acquired && options.failNextMoveBatch) {
+      options.clearFailure();
+      throw new Error("synthetic move failure");
+    }
+    if (acquired && source.parent_id !== newParentId) {
+      const updateValues = statements[1]._values();
+      source.parent_id = newParentId;
+      source.version += 1;
+      source.updated_at = updateValues[1];
+      audit.writes += 2;
+    } else if (acquired) {
+      audit.writes += 1;
+    }
+    const record = state.idempotency.find(row => row.operation === operation
+      && row.idempotency_key === key);
+    let outcome = "UNEXPECTED_STATE";
+    if (record && record.request_hash !== hash) outcome = "IDEMPOTENCY_CONFLICT";
+    else if (record && record.attempt_id === attemptId) outcome = "COMPLETED";
+    else if (record && record.request_hash === hash) outcome = "REPLAY";
+    else if (!source) outcome = "CONTAINER_NOT_FOUND";
+    else if (source.lifecycle_state === "ARCHIVED") outcome = "CONTAINER_ARCHIVED";
+    else if (source.version !== expectedVersion) outcome = "VERSION_CONFLICT";
+    else if (newParentId === sourceId) outcome = "SELF_PARENT";
+    else if (newParentId !== null && !parent) outcome = "PARENT_NOT_FOUND";
+    else if (newParentId !== null && parent.lifecycle_state === "ARCHIVED") {
+      outcome = "PARENT_ARCHIVED";
+    } else if (newParentId !== null
+      && isDescendant(state.containers, sourceId, newParentId)) outcome = "CYCLE";
+    return [{ success: true }, { success: true }, { success: true,
+      results: [{ outcome, response_json: record?.response_json ?? null }] }];
+  } catch (error) {
+    state.containers = before.containers;
+    state.tasks = before.tasks;
+    state.markers = before.markers;
+    state.idempotency = before.idempotency;
+    throw error;
+  }
+}
+
+function isDescendant(containers, ancestorId, candidateId) {
+  const pending = containers.filter(row => row.parent_id === ancestorId)
+    .map(row => row.container_id);
+  const visited = new Set();
+  while (pending.length) {
+    const id = pending.shift();
+    if (id === candidateId) return true;
+    if (visited.has(id)) continue;
+    visited.add(id);
+    pending.push(...containers.filter(row => row.parent_id === id).map(row => row.container_id));
+  }
+  return false;
 }

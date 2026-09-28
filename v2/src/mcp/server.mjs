@@ -65,6 +65,27 @@ const createContainerOutputSchema = z.object({
   replayed: z.boolean(),
   container: containerSchema
 }).strict();
+const moveContainerIdSchema = z.string({ error: "INVALID_CONTAINER_ID" })
+  .transform(value => value.trim())
+  .pipe(z.string().min(1, "INVALID_CONTAINER_ID"));
+const moveParentIdSchema = z.string({ error: "INVALID_NEW_PARENT_ID" })
+  .transform(value => value.trim())
+  .pipe(z.string().min(1, "INVALID_NEW_PARENT_ID"))
+  .nullable();
+const expectedVersionSchema = z.number({ error: "INVALID_EXPECTED_VERSION" })
+  .int("INVALID_EXPECTED_VERSION")
+  .positive("INVALID_EXPECTED_VERSION");
+const moveContainerInputSchema = z.object({
+  idempotencyKey: idempotencyKeySchema,
+  containerId: moveContainerIdSchema,
+  newParentId: moveParentIdSchema,
+  expectedVersion: expectedVersionSchema
+}).strict();
+const moveContainerOutputSchema = z.object({
+  replayed: z.boolean(),
+  changed: z.boolean(),
+  container: containerSchema
+}).strict();
 const toolErrorSchema = z.object({
   error: z.object({
     code: z.string(),
@@ -100,6 +121,32 @@ export function createDeskMcpServer(env) {
           return errorResult(error.code, error.message, error.retryable);
         }
         return errorResult("D1_OPERATION_FAILED", "The Container could not be created.", true);
+      }
+    }
+  );
+
+  server.registerTool(
+    "desk_v2_move_container",
+    {
+      title: "Move Desk V2 Container",
+      description: "Moves one active Desk V2 Container to root or under another active Container while preserving its identity, subtree, Tasks, and domain fields. Requires optimistic concurrency and an idempotency key.",
+      inputSchema: moveContainerInputSchema,
+      outputSchema: z.union([moveContainerOutputSchema, toolErrorSchema]),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      }
+    },
+    async input => {
+      try {
+        return result(await containerRepository.moveContainer(input));
+      } catch (error) {
+        if (error instanceof ContainerDomainError) {
+          return errorResult(error.code, error.message, error.retryable);
+        }
+        return errorResult("D1_OPERATION_FAILED", "The Container could not be moved.", true);
       }
     }
   );

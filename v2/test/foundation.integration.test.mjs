@@ -101,6 +101,8 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
       env: sanitizedEnvironment(),
       stdio: ["ignore", "pipe", "pipe"]
     });
+    workerProcess.stdout.resume();
+    workerProcess.stderr.pipe(process.stderr);
     const health = await waitForResponse(`http://127.0.0.1:${port}/health`);
     assert.equal(health.status, 200);
     assert.deepEqual(await health.json(), {
@@ -120,9 +122,10 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
     await client.connect(transport);
     try {
       const tools = await client.listTools();
-      assert.equal(tools.tools.length, 4);
+      assert.equal(tools.tools.length, 5);
       assert.ok(tools.tools.some(tool => tool.name === "desk_v2_get_containers"));
       assert.ok(tools.tools.some(tool => tool.name === "desk_v2_create_container"));
+      assert.ok(tools.tools.some(tool => tool.name === "desk_v2_move_container"));
 
       const roots = await client.callTool({
         name: "desk_v2_get_containers",
@@ -258,6 +261,153 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
       assertQuery("SELECT COUNT(*) AS value FROM containers WHERE name='Allowed Duplicate';",
         /value[^0-9]*2/i);
       assertQuery("SELECT COUNT(*) AS value FROM tasks;", /value[^0-9]*1/i);
+
+      execute(`INSERT INTO containers
+        (container_id,parent_id,name,status,lifecycle_state,version,created_at,updated_at)
+        VALUES
+        ('MOVE-ROOT-A',NULL,'Move Root A','IN_PROGRESS','ACTIVE',1,
+         '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z'),
+        ('MOVE-ROOT-B',NULL,'Move Root B','IN_PROGRESS','ACTIVE',1,
+         '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z'),
+        ('MOVE-CHILD','MOVE-ROOT-A','Move Child','IN_PROGRESS','ACTIVE',1,
+         '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z'),
+        ('MOVE-GRANDCHILD','MOVE-CHILD','Move Grandchild','IN_PROGRESS','ACTIVE',1,
+         '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z');`);
+      execute(`INSERT INTO tasks
+        (task_id,container_id,title,status,lifecycle_state,version,created_at,updated_at)
+        VALUES ('MOVE-TASK','MOVE-CHILD','Move Task','OPEN','ACTIVE',1,
+        '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z');`);
+
+      const movedToB = await client.callTool({ name: "desk_v2_move_container", arguments: {
+        idempotencyKey: "integration-move-to-b", containerId: "MOVE-CHILD",
+        newParentId: "MOVE-ROOT-B", expectedVersion: 1
+      } });
+      assert.equal(movedToB.structuredContent.changed, true);
+      assert.equal(movedToB.structuredContent.container.containerId, "MOVE-CHILD");
+      assert.equal(movedToB.structuredContent.container.parentId, "MOVE-ROOT-B");
+      assert.equal(movedToB.structuredContent.container.version, 2);
+      assert.equal(movedToB.structuredContent.container.createdAt,
+        "2026-01-01T00:00:00.000Z");
+      assert.notEqual(movedToB.structuredContent.container.updatedAt,
+        "2026-01-01T00:00:00.000Z");
+      const grandchildAfterMove = await client.callTool({
+        name: "desk_v2_get_containers", arguments: { containerId: "MOVE-GRANDCHILD" }
+      });
+      assert.equal(grandchildAfterMove.structuredContent.containers[0].parentId, "MOVE-CHILD");
+
+      const cycle = await client.callTool({ name: "desk_v2_move_container", arguments: {
+        idempotencyKey: "integration-cycle", containerId: "MOVE-CHILD",
+        newParentId: "MOVE-GRANDCHILD", expectedVersion: 2
+      } });
+      assert.equal(cycle.isError, true);
+      assert.equal(cycle.structuredContent.error.code, "CONTAINER_CYCLE");
+
+      const movedToRoot = await client.callTool({ name: "desk_v2_move_container", arguments: {
+        idempotencyKey: "integration-move-root", containerId: "MOVE-CHILD",
+        newParentId: null, expectedVersion: 2
+      } });
+      assert.equal(movedToRoot.structuredContent.container.parentId, null);
+      assert.equal(movedToRoot.structuredContent.container.version, 3);
+
+      const archivedParentMove = await client.callTool({
+        name: "desk_v2_move_container", arguments: {
+          idempotencyKey: "integration-archived-parent", containerId: "MOVE-CHILD",
+          newParentId: "FIXTURE-ARCHIVED-PARENT", expectedVersion: 3
+        }
+      });
+      assert.equal(archivedParentMove.structuredContent.error.code,
+        "CONTAINER_PARENT_ARCHIVED");
+      const archivedSourceMove = await client.callTool({
+        name: "desk_v2_move_container", arguments: {
+          idempotencyKey: "integration-archived-source",
+          containerId: "FIXTURE-ARCHIVED-PARENT", newParentId: null, expectedVersion: 1
+        }
+      });
+      assert.equal(archivedSourceMove.structuredContent.error.code, "CONTAINER_ARCHIVED");
+
+      const noOpInput = { idempotencyKey: "integration-noop", containerId: "MOVE-CHILD",
+        newParentId: null, expectedVersion: 3 };
+      const noOp = await client.callTool({ name: "desk_v2_move_container", arguments: noOpInput });
+      assert.equal(noOp.structuredContent.changed, false);
+      assert.equal(noOp.structuredContent.container.version, 3);
+      const noOpReplay = await client.callTool({
+        name: "desk_v2_move_container", arguments: noOpInput
+      });
+      assert.equal(noOpReplay.structuredContent.replayed, true);
+      assert.deepEqual(noOpReplay.structuredContent.container, noOp.structuredContent.container);
+
+      const competing = await Promise.all([
+        client.callTool({ name: "desk_v2_move_container", arguments: {
+          idempotencyKey: "integration-race-a", containerId: "MOVE-CHILD",
+          newParentId: "MOVE-ROOT-A", expectedVersion: 3
+        } }),
+        client.callTool({ name: "desk_v2_move_container", arguments: {
+          idempotencyKey: "integration-race-b", containerId: "MOVE-CHILD",
+          newParentId: "MOVE-ROOT-B", expectedVersion: 3
+        } })
+      ]);
+      assert.equal(competing.filter(item => item.isError !== true).length, 1);
+      assert.equal(competing.find(item => item.isError === true)
+        .structuredContent.error.code, "CONTAINER_VERSION_CONFLICT");
+
+      const sameKeyInput = { idempotencyKey: "integration-same-key",
+        containerId: "MOVE-GRANDCHILD", newParentId: "MOVE-ROOT-A", expectedVersion: 1 };
+      const sameKey = await Promise.all([
+        client.callTool({ name: "desk_v2_move_container", arguments: sameKeyInput }),
+        client.callTool({ name: "desk_v2_move_container", arguments: sameKeyInput })
+      ]);
+      assert.deepEqual(sameKey.map(item => item.structuredContent.replayed).sort(),
+        [false, true]);
+
+      const historicalInput = { idempotencyKey: "integration-historical",
+        containerId: "MOVE-ROOT-B", newParentId: "MOVE-ROOT-A", expectedVersion: 1 };
+      const historical = await client.callTool({
+        name: "desk_v2_move_container", arguments: historicalInput
+      });
+      execute(`UPDATE containers SET parent_id=NULL, version=version+1,
+        updated_at='2026-01-03T00:00:00.000Z' WHERE container_id='MOVE-ROOT-B';`);
+      const historicalReplay = await client.callTool({
+        name: "desk_v2_move_container", arguments: historicalInput
+      });
+      assert.equal(historicalReplay.structuredContent.replayed, true);
+      assert.deepEqual(historicalReplay.structuredContent.container,
+        historical.structuredContent.container);
+      execute(`CREATE TRIGGER move_test_forced_failure
+        BEFORE UPDATE OF parent_id ON containers
+        WHEN NEW.container_id='MOVE-ROOT-A'
+        BEGIN SELECT RAISE(ABORT, 'MOVE_TEST_FAILURE'); END;`);
+      const forcedFailure = await client.callTool({
+        name: "desk_v2_move_container", arguments: {
+          idempotencyKey: "integration-rollback", containerId: "MOVE-ROOT-A",
+          newParentId: "MOVE-ROOT-B", expectedVersion: 1
+        }
+      });
+      assert.equal(forcedFailure.isError, true);
+      assert.equal(forcedFailure.structuredContent.error.code, "D1_OPERATION_FAILED");
+      execute("DROP TRIGGER move_test_forced_failure;");
+      assertQuery("SELECT container_id FROM tasks WHERE task_id='MOVE-TASK';", /MOVE-CHILD/);
+      assertQuery(`SELECT COUNT(*) AS value FROM mcp_idempotency
+        WHERE operation='desk_v2_move_container' AND idempotency_key='integration-noop';`,
+      /value[^0-9]*1/i);
+      assertQuery("SELECT version AS value FROM containers WHERE container_id='MOVE-CHILD';",
+        /value[^0-9]*4/i);
+      assertQuery(`SELECT COUNT(*) AS value FROM mcp_idempotency
+        WHERE idempotency_key IN ('integration-race-a','integration-race-b');`,
+      /value[^0-9]*1/i);
+      assertQuery(`SELECT version AS value FROM containers
+        WHERE container_id='MOVE-GRANDCHILD';`, /value[^0-9]*2/i);
+      assertQuery(`SELECT COUNT(*) AS value FROM mcp_idempotency
+        WHERE operation='desk_v2_move_container'
+          AND idempotency_key='integration-same-key';`, /value[^0-9]*1/i);
+      assertQuery(`SELECT COUNT(*) AS value FROM mcp_idempotency
+        WHERE operation='desk_v2_move_container'
+          AND idempotency_key='integration-rollback';`, /value[^0-9]*0/i);
+      assertQuery(`SELECT COUNT(*) AS value FROM containers
+        WHERE container_id='MOVE-ROOT-B' AND parent_id IS NULL AND version=3;`,
+      /value[^0-9]*1/i);
+      assertQuery(`SELECT COUNT(*) AS value FROM containers
+        WHERE container_id='MOVE-ROOT-A' AND parent_id IS NULL AND version=1;`,
+      /value[^0-9]*1/i);
     } finally {
       await client.close();
     }

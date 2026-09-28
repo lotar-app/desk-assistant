@@ -13,6 +13,7 @@ const CONTAINER_COLUMNS = `
   archived_at`;
 
 const CREATE_OPERATION = "desk_v2_create_container";
+const MOVE_OPERATION = "desk_v2_move_container";
 const RESOURCE_TYPE = "container";
 const INITIAL_STATUS = "IN_PROGRESS";
 const INITIAL_LIFECYCLE = "ACTIVE";
@@ -170,10 +171,236 @@ export class ContainerRepository {
     throw domainError("D1_OPERATION_FAILED", "The Container could not be created.", true);
   }
 
+  async moveContainer(input) {
+    const canonicalPayload = JSON.stringify({
+      containerId: input.containerId,
+      newParentId: input.newParentId,
+      expectedVersion: input.expectedVersion
+    });
+    const requestHash = await sha256(canonicalPayload);
+    const existing = await this.db.prepare(`
+      SELECT request_hash, response_json
+      FROM mcp_idempotency
+      WHERE operation = ? AND idempotency_key = ?
+    `).bind(MOVE_OPERATION, input.idempotencyKey).first();
+    if (existing) return replayOrConflict(existing, requestHash);
+
+    const currentRow = await this.#containerRow(input.containerId);
+    if (!currentRow) throw moveError("CONTAINER_NOT_FOUND");
+    if (currentRow.lifecycle_state === "ARCHIVED") throw moveError("CONTAINER_ARCHIVED");
+    if (Number(currentRow.version) !== input.expectedVersion) {
+      throw moveError("CONTAINER_VERSION_CONFLICT");
+    }
+    if (input.newParentId === input.containerId) throw moveError("CONTAINER_SELF_PARENT");
+    if (input.newParentId !== null) {
+      const parent = await this.#containerRow(input.newParentId);
+      if (!parent) throw moveError("CONTAINER_PARENT_NOT_FOUND");
+      if (parent.lifecycle_state === "ARCHIVED") {
+        throw moveError("CONTAINER_PARENT_ARCHIVED");
+      }
+      if (await this.#isDescendant(input.containerId, input.newParentId)) {
+        throw moveError("CONTAINER_CYCLE");
+      }
+    }
+
+    const changed = currentRow.parent_id !== input.newParentId;
+    const attemptId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const container = mapContainer({
+      ...currentRow,
+      parent_id: input.newParentId,
+      version: changed ? Number(currentRow.version) + 1 : Number(currentRow.version),
+      updated_at: changed ? now : currentRow.updated_at
+    });
+    const responseJson = JSON.stringify({ changed, container });
+
+    const acquire = this.db.prepare(`
+      INSERT INTO mcp_idempotency
+        (operation, idempotency_key, request_hash, attempt_id, resource_type,
+         resource_id, response_json, completed_at)
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE EXISTS (
+        SELECT 1 FROM containers AS source
+        WHERE source.container_id = ?
+          AND source.lifecycle_state = 'ACTIVE'
+          AND source.version = ?
+      )
+        AND (? IS NULL OR ? <> ?)
+        AND (? IS NULL OR EXISTS (
+          SELECT 1 FROM containers AS parent
+          WHERE parent.container_id = ? AND parent.lifecycle_state = 'ACTIVE'
+        ))
+        AND (? IS NULL OR NOT EXISTS (
+          WITH RECURSIVE descendants(container_id) AS (
+            SELECT container_id FROM containers WHERE parent_id = ?
+            UNION ALL
+            SELECT child.container_id
+            FROM containers AS child
+            JOIN descendants AS ancestor ON child.parent_id = ancestor.container_id
+          )
+          SELECT 1 FROM descendants WHERE container_id = ?
+        ))
+      ON CONFLICT(operation, idempotency_key) DO NOTHING
+    `).bind(
+      MOVE_OPERATION, input.idempotencyKey, requestHash, attemptId, RESOURCE_TYPE,
+      input.containerId, responseJson, now,
+      input.containerId, input.expectedVersion,
+      input.newParentId, input.newParentId, input.containerId,
+      input.newParentId, input.newParentId,
+      input.newParentId, input.containerId, input.newParentId
+    );
+    const update = this.db.prepare(`
+      UPDATE containers
+      SET parent_id = ?, version = version + 1, updated_at = ?
+      WHERE container_id = ? AND lifecycle_state = 'ACTIVE' AND version = ?
+        AND parent_id IS NOT ?
+        AND EXISTS (
+          SELECT 1 FROM mcp_idempotency
+          WHERE operation = ? AND idempotency_key = ? AND request_hash = ?
+            AND attempt_id = ?
+        )
+    `).bind(
+      input.newParentId, now, input.containerId, input.expectedVersion,
+      input.newParentId, MOVE_OPERATION, input.idempotencyKey, requestHash, attemptId
+    );
+    const classify = this.#moveClassificationStatement(input, requestHash, attemptId);
+
+    let results;
+    try {
+      results = await this.db.batch([acquire, update, classify]);
+      if (!Array.isArray(results) || results.some(item => item?.success === false)) {
+        throw new Error("D1_BATCH_FAILED");
+      }
+    } catch {
+      const failure = await this.#classifyMoveFailure(input, requestHash);
+      if (failure instanceof Error) throw failure;
+      return failure;
+    }
+
+    const outcome = results[2]?.results?.[0];
+    return moveOutcome(outcome);
+  }
+
   async #all(sql, values) {
     const statement = this.db.prepare(sql).bind(...values);
     const result = await statement.all();
     return (result.results || []).map(mapContainer);
+  }
+
+  async #containerRow(containerId) {
+    return this.db.prepare(`
+      SELECT ${CONTAINER_COLUMNS}
+      FROM containers
+      WHERE container_id = ?
+    `).bind(containerId).first();
+  }
+
+  async #isDescendant(containerId, possibleDescendantId) {
+    const result = await this.db.prepare(`
+      WITH RECURSIVE descendants(container_id) AS (
+        SELECT container_id FROM containers WHERE parent_id = ?
+        UNION ALL
+        SELECT child.container_id
+        FROM containers AS child
+        JOIN descendants AS ancestor ON child.parent_id = ancestor.container_id
+      )
+      SELECT 1 AS found FROM descendants WHERE container_id = ? LIMIT 1
+    `).bind(containerId, possibleDescendantId).all();
+    return Boolean(result.results?.length);
+  }
+
+  #moveClassificationStatement(input, requestHash, attemptId) {
+    return this.db.prepare(`
+      SELECT CASE
+        WHEN EXISTS (
+          SELECT 1 FROM mcp_idempotency
+          WHERE operation = ? AND idempotency_key = ? AND request_hash <> ?
+        ) THEN 'IDEMPOTENCY_CONFLICT'
+        WHEN EXISTS (
+          SELECT 1 FROM mcp_idempotency
+          WHERE operation = ? AND idempotency_key = ? AND request_hash = ?
+            AND attempt_id = ?
+        ) THEN 'COMPLETED'
+        WHEN EXISTS (
+          SELECT 1 FROM mcp_idempotency
+          WHERE operation = ? AND idempotency_key = ? AND request_hash = ?
+        ) THEN 'REPLAY'
+        WHEN NOT EXISTS (
+          SELECT 1 FROM containers WHERE container_id = ?
+        ) THEN 'CONTAINER_NOT_FOUND'
+        WHEN EXISTS (
+          SELECT 1 FROM containers
+          WHERE container_id = ? AND lifecycle_state = 'ARCHIVED'
+        ) THEN 'CONTAINER_ARCHIVED'
+        WHEN NOT EXISTS (
+          SELECT 1 FROM containers WHERE container_id = ? AND version = ?
+        ) THEN 'VERSION_CONFLICT'
+        WHEN ? IS NOT NULL AND ? = ? THEN 'SELF_PARENT'
+        WHEN ? IS NOT NULL AND NOT EXISTS (
+          SELECT 1 FROM containers WHERE container_id = ?
+        ) THEN 'PARENT_NOT_FOUND'
+        WHEN ? IS NOT NULL AND EXISTS (
+          SELECT 1 FROM containers
+          WHERE container_id = ? AND lifecycle_state = 'ARCHIVED'
+        ) THEN 'PARENT_ARCHIVED'
+        WHEN ? IS NOT NULL AND EXISTS (
+          WITH RECURSIVE descendants(container_id) AS (
+            SELECT container_id FROM containers WHERE parent_id = ?
+            UNION ALL
+            SELECT child.container_id
+            FROM containers AS child
+            JOIN descendants AS ancestor ON child.parent_id = ancestor.container_id
+          )
+          SELECT 1 FROM descendants WHERE container_id = ?
+        ) THEN 'CYCLE'
+        ELSE 'UNEXPECTED_STATE'
+      END AS outcome,
+      (SELECT response_json FROM mcp_idempotency
+       WHERE operation = ? AND idempotency_key = ?) AS response_json
+    `).bind(
+      MOVE_OPERATION, input.idempotencyKey, requestHash,
+      MOVE_OPERATION, input.idempotencyKey, requestHash, attemptId,
+      MOVE_OPERATION, input.idempotencyKey, requestHash,
+      input.containerId,
+      input.containerId,
+      input.containerId, input.expectedVersion,
+      input.newParentId, input.newParentId, input.containerId,
+      input.newParentId, input.newParentId,
+      input.newParentId, input.newParentId,
+      input.newParentId, input.containerId, input.newParentId,
+      MOVE_OPERATION, input.idempotencyKey
+    );
+  }
+
+  async #classifyMoveFailure(input, requestHash) {
+    try {
+      const existing = await this.db.prepare(`
+        SELECT request_hash, response_json
+        FROM mcp_idempotency
+        WHERE operation = ? AND idempotency_key = ?
+      `).bind(MOVE_OPERATION, input.idempotencyKey).first();
+      if (existing) return replayOrConflict(existing, requestHash);
+      const source = await this.#containerRow(input.containerId);
+      if (!source) return moveError("CONTAINER_NOT_FOUND");
+      if (source.lifecycle_state === "ARCHIVED") return moveError("CONTAINER_ARCHIVED");
+      if (Number(source.version) !== input.expectedVersion) {
+        return moveError("CONTAINER_VERSION_CONFLICT");
+      }
+      if (input.newParentId === input.containerId) return moveError("CONTAINER_SELF_PARENT");
+      if (input.newParentId !== null) {
+        const parent = await this.#containerRow(input.newParentId);
+        if (!parent) return moveError("CONTAINER_PARENT_NOT_FOUND");
+        if (parent.lifecycle_state === "ARCHIVED") {
+          return moveError("CONTAINER_PARENT_ARCHIVED");
+        }
+        if (await this.#isDescendant(input.containerId, input.newParentId)) {
+          return moveError("CONTAINER_CYCLE");
+        }
+      }
+    } catch (error) {
+      if (error instanceof ContainerDomainError) return error;
+    }
+    return moveError("D1_OPERATION_FAILED");
   }
 
   async #classifyBatchFailure(containerId, parentId) {
@@ -216,6 +443,48 @@ export class ContainerDomainError extends Error {
 
 function domainError(code, message, retryable) {
   return new ContainerDomainError(code, message, retryable);
+}
+
+const MOVE_ERRORS = {
+  CONTAINER_NOT_FOUND: ["The Container does not exist.", false],
+  CONTAINER_ARCHIVED: ["An archived Container cannot be moved.", false],
+  CONTAINER_PARENT_NOT_FOUND: ["The requested parent Container does not exist.", false],
+  CONTAINER_PARENT_ARCHIVED: ["An active Container cannot be moved under an archived parent.", false],
+  CONTAINER_SELF_PARENT: ["A Container cannot be its own parent.", false],
+  CONTAINER_CYCLE: ["The Move would create a Container cycle.", false],
+  CONTAINER_VERSION_CONFLICT: ["The Container changed since it was read.", false],
+  IDEMPOTENCY_KEY_CONFLICT: ["The idempotency key was already used with a different request.", false],
+  D1_OPERATION_FAILED: ["The Container could not be moved.", true]
+};
+
+function moveError(code) {
+  const [message, retryable] = MOVE_ERRORS[code];
+  return domainError(code, message, retryable);
+}
+
+function replayOrConflict(existing, requestHash) {
+  if (existing.request_hash !== requestHash) throw moveError("IDEMPOTENCY_KEY_CONFLICT");
+  return { replayed: true, ...JSON.parse(existing.response_json) };
+}
+
+function moveOutcome(outcome) {
+  if (outcome?.outcome === "COMPLETED") {
+    return { replayed: false, ...JSON.parse(outcome.response_json) };
+  }
+  if (outcome?.outcome === "REPLAY") {
+    return { replayed: true, ...JSON.parse(outcome.response_json) };
+  }
+  const codes = {
+    IDEMPOTENCY_CONFLICT: "IDEMPOTENCY_KEY_CONFLICT",
+    CONTAINER_NOT_FOUND: "CONTAINER_NOT_FOUND",
+    CONTAINER_ARCHIVED: "CONTAINER_ARCHIVED",
+    VERSION_CONFLICT: "CONTAINER_VERSION_CONFLICT",
+    SELF_PARENT: "CONTAINER_SELF_PARENT",
+    PARENT_NOT_FOUND: "CONTAINER_PARENT_NOT_FOUND",
+    PARENT_ARCHIVED: "CONTAINER_PARENT_ARCHIVED",
+    CYCLE: "CONTAINER_CYCLE"
+  };
+  throw moveError(codes[outcome?.outcome] || "D1_OPERATION_FAILED");
 }
 
 async function sha256(value) {
