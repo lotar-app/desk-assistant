@@ -14,6 +14,7 @@ const CONTAINER_COLUMNS = `
 
 const CREATE_OPERATION = "desk_v2_create_container";
 const MOVE_OPERATION = "desk_v2_move_container";
+const UPDATE_OPERATION = "desk_v2_update_container";
 const RESOURCE_TYPE = "container";
 const INITIAL_STATUS = "IN_PROGRESS";
 const INITIAL_LIFECYCLE = "ACTIVE";
@@ -281,6 +282,90 @@ export class ContainerRepository {
     return moveOutcome(outcome);
   }
 
+  async updateContainer(input) {
+    const patch = canonicalUpdatePatch(input.patch);
+    const canonicalPayload = JSON.stringify({
+      containerId: input.containerId,
+      expectedVersion: input.expectedVersion,
+      patch
+    });
+    const requestHash = await sha256(canonicalPayload);
+    const existing = await this.db.prepare(`
+      SELECT request_hash, response_json
+      FROM mcp_idempotency
+      WHERE operation = ? AND idempotency_key = ?
+    `).bind(UPDATE_OPERATION, input.idempotencyKey).first();
+    if (existing) return replayOrConflict(existing, requestHash, updateError);
+
+    const currentRow = await this.#containerRow(input.containerId);
+    if (!currentRow) throw updateError("CONTAINER_NOT_FOUND");
+    if (currentRow.lifecycle_state === "ARCHIVED") throw updateError("CONTAINER_ARCHIVED");
+    if (Number(currentRow.version) !== input.expectedVersion) {
+      throw updateError("CONTAINER_VERSION_CONFLICT");
+    }
+
+    const resultingRow = { ...currentRow };
+    for (const [field, column] of Object.entries(UPDATE_COLUMNS)) {
+      if (Object.hasOwn(patch, field)) resultingRow[column] = patch[field];
+    }
+    const changed = Object.entries(UPDATE_COLUMNS).some(([field, column]) =>
+      Object.hasOwn(patch, field) && currentRow[column] !== patch[field]);
+    const attemptId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    if (changed) {
+      resultingRow.version = Number(currentRow.version) + 1;
+      resultingRow.updated_at = now;
+    }
+    const container = mapContainer(resultingRow);
+    const responseJson = JSON.stringify({ changed, container });
+
+    const acquire = this.db.prepare(`
+      INSERT INTO mcp_idempotency
+        (operation, idempotency_key, request_hash, attempt_id, resource_type,
+         resource_id, response_json, completed_at)
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE EXISTS (
+        SELECT 1 FROM containers
+        WHERE container_id = ? AND lifecycle_state = 'ACTIVE' AND version = ?
+      )
+      ON CONFLICT(operation, idempotency_key) DO NOTHING
+    `).bind(
+      UPDATE_OPERATION, input.idempotencyKey, requestHash, attemptId, RESOURCE_TYPE,
+      input.containerId, responseJson, now, input.containerId, input.expectedVersion
+    );
+    const assignments = Object.keys(patch).map(field => `${UPDATE_COLUMNS[field]} = ?`);
+    const update = this.db.prepare(`
+      UPDATE containers
+      SET ${assignments.join(", ")}, version = version + 1, updated_at = ?
+      WHERE container_id = ? AND lifecycle_state = 'ACTIVE' AND version = ?
+        AND ? = 1
+        AND EXISTS (
+          SELECT 1 FROM mcp_idempotency
+          WHERE operation = ? AND idempotency_key = ? AND request_hash = ?
+            AND attempt_id = ?
+        )
+    `).bind(
+      ...Object.keys(patch).map(field => patch[field]), now, input.containerId,
+      input.expectedVersion, changed ? 1 : 0, UPDATE_OPERATION,
+      input.idempotencyKey, requestHash, attemptId
+    );
+    const classify = this.#updateClassificationStatement(input, requestHash, attemptId);
+
+    let results;
+    try {
+      results = await this.db.batch([acquire, update, classify]);
+      if (!Array.isArray(results) || results.some(item => item?.success === false)) {
+        throw new Error("D1_BATCH_FAILED");
+      }
+    } catch {
+      const failure = await this.#classifyUpdateFailure(input, requestHash);
+      if (failure instanceof Error) throw failure;
+      return failure;
+    }
+
+    return updateOutcome(results[2]?.results?.[0]);
+  }
+
   async #all(sql, values) {
     const statement = this.db.prepare(sql).bind(...values);
     const result = await statement.all();
@@ -403,6 +488,66 @@ export class ContainerRepository {
     return moveError("D1_OPERATION_FAILED");
   }
 
+  #updateClassificationStatement(input, requestHash, attemptId) {
+    return this.db.prepare(`
+      SELECT CASE
+        WHEN EXISTS (
+          SELECT 1 FROM mcp_idempotency
+          WHERE operation = ? AND idempotency_key = ? AND request_hash <> ?
+        ) THEN 'IDEMPOTENCY_CONFLICT'
+        WHEN EXISTS (
+          SELECT 1 FROM mcp_idempotency
+          WHERE operation = ? AND idempotency_key = ? AND request_hash = ?
+            AND attempt_id = ?
+        ) THEN 'COMPLETED'
+        WHEN EXISTS (
+          SELECT 1 FROM mcp_idempotency
+          WHERE operation = ? AND idempotency_key = ? AND request_hash = ?
+        ) THEN 'REPLAY'
+        WHEN NOT EXISTS (
+          SELECT 1 FROM containers WHERE container_id = ?
+        ) THEN 'CONTAINER_NOT_FOUND'
+        WHEN EXISTS (
+          SELECT 1 FROM containers
+          WHERE container_id = ? AND lifecycle_state = 'ARCHIVED'
+        ) THEN 'CONTAINER_ARCHIVED'
+        WHEN NOT EXISTS (
+          SELECT 1 FROM containers WHERE container_id = ? AND version = ?
+        ) THEN 'VERSION_CONFLICT'
+        ELSE 'UNEXPECTED_STATE'
+      END AS outcome,
+      (SELECT response_json FROM mcp_idempotency
+       WHERE operation = ? AND idempotency_key = ?) AS response_json
+    `).bind(
+      UPDATE_OPERATION, input.idempotencyKey, requestHash,
+      UPDATE_OPERATION, input.idempotencyKey, requestHash, attemptId,
+      UPDATE_OPERATION, input.idempotencyKey, requestHash,
+      input.containerId, input.containerId,
+      input.containerId, input.expectedVersion,
+      UPDATE_OPERATION, input.idempotencyKey
+    );
+  }
+
+  async #classifyUpdateFailure(input, requestHash) {
+    try {
+      const existing = await this.db.prepare(`
+        SELECT request_hash, response_json
+        FROM mcp_idempotency
+        WHERE operation = ? AND idempotency_key = ?
+      `).bind(UPDATE_OPERATION, input.idempotencyKey).first();
+      if (existing) return replayOrConflict(existing, requestHash, updateError);
+      const source = await this.#containerRow(input.containerId);
+      if (!source) return updateError("CONTAINER_NOT_FOUND");
+      if (source.lifecycle_state === "ARCHIVED") return updateError("CONTAINER_ARCHIVED");
+      if (Number(source.version) !== input.expectedVersion) {
+        return updateError("CONTAINER_VERSION_CONFLICT");
+      }
+    } catch (error) {
+      if (error instanceof ContainerDomainError) return error;
+    }
+    return updateError("D1_OPERATION_FAILED");
+  }
+
   async #classifyBatchFailure(containerId, parentId) {
     try {
       const collision = await this.db.prepare(
@@ -457,13 +602,34 @@ const MOVE_ERRORS = {
   D1_OPERATION_FAILED: ["The Container could not be moved.", true]
 };
 
+const UPDATE_ERRORS = {
+  CONTAINER_NOT_FOUND: ["The Container does not exist.", false],
+  CONTAINER_ARCHIVED: ["An archived Container cannot be updated.", false],
+  CONTAINER_VERSION_CONFLICT: ["The Container changed since it was read.", false],
+  IDEMPOTENCY_KEY_CONFLICT: ["The idempotency key was already used with a different request.", false],
+  D1_OPERATION_FAILED: ["The Container could not be updated.", true]
+};
+
+const UPDATE_COLUMNS = {
+  name: "name",
+  status: "status",
+  focus: "focus",
+  owner: "owner",
+  nextAction: "next_action"
+};
+
 function moveError(code) {
   const [message, retryable] = MOVE_ERRORS[code];
   return domainError(code, message, retryable);
 }
 
-function replayOrConflict(existing, requestHash) {
-  if (existing.request_hash !== requestHash) throw moveError("IDEMPOTENCY_KEY_CONFLICT");
+function updateError(code) {
+  const [message, retryable] = UPDATE_ERRORS[code];
+  return domainError(code, message, retryable);
+}
+
+function replayOrConflict(existing, requestHash, errorFactory = moveError) {
+  if (existing.request_hash !== requestHash) throw errorFactory("IDEMPOTENCY_KEY_CONFLICT");
   return { replayed: true, ...JSON.parse(existing.response_json) };
 }
 
@@ -485,6 +651,30 @@ function moveOutcome(outcome) {
     CYCLE: "CONTAINER_CYCLE"
   };
   throw moveError(codes[outcome?.outcome] || "D1_OPERATION_FAILED");
+}
+
+function updateOutcome(outcome) {
+  if (outcome?.outcome === "COMPLETED") {
+    return { replayed: false, ...JSON.parse(outcome.response_json) };
+  }
+  if (outcome?.outcome === "REPLAY") {
+    return { replayed: true, ...JSON.parse(outcome.response_json) };
+  }
+  const codes = {
+    IDEMPOTENCY_CONFLICT: "IDEMPOTENCY_KEY_CONFLICT",
+    CONTAINER_NOT_FOUND: "CONTAINER_NOT_FOUND",
+    CONTAINER_ARCHIVED: "CONTAINER_ARCHIVED",
+    VERSION_CONFLICT: "CONTAINER_VERSION_CONFLICT"
+  };
+  throw updateError(codes[outcome?.outcome] || "D1_OPERATION_FAILED");
+}
+
+function canonicalUpdatePatch(patch) {
+  const canonical = {};
+  for (const field of Object.keys(UPDATE_COLUMNS)) {
+    if (Object.hasOwn(patch, field)) canonical[field] = patch[field];
+  }
+  return canonical;
 }
 
 async function sha256(value) {

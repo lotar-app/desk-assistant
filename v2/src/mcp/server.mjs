@@ -86,6 +86,29 @@ const moveContainerOutputSchema = z.object({
   changed: z.boolean(),
   container: containerSchema
 }).strict();
+const updateRequiredTextSchema = code => z.string({ error: code })
+  .transform(value => value.trim())
+  .pipe(z.string().min(1, code));
+const updateNullableTextSchema = code => z.string({ error: code }).nullable()
+  .transform(value => {
+    if (value === null) return null;
+    const normalized = value.trim();
+    return normalized || null;
+  });
+const updatePatchSchema = z.object({
+  name: updateRequiredTextSchema("INVALID_CONTAINER_NAME").optional(),
+  status: updateRequiredTextSchema("INVALID_CONTAINER_STATUS").optional(),
+  focus: updateNullableTextSchema("INVALID_CONTAINER_FOCUS").optional(),
+  owner: updateNullableTextSchema("INVALID_CONTAINER_OWNER").optional(),
+  nextAction: updateNullableTextSchema("INVALID_CONTAINER_NEXT_ACTION").optional()
+}, { error: "INVALID_PATCH" }).strict("INVALID_PATCH")
+  .refine(patch => Object.keys(patch).length > 0, "INVALID_PATCH");
+const updateContainerInputSchema = z.object({
+  idempotencyKey: idempotencyKeySchema,
+  containerId: moveContainerIdSchema,
+  expectedVersion: expectedVersionSchema,
+  patch: updatePatchSchema
+}).strict();
 const toolErrorSchema = z.object({
   error: z.object({
     code: z.string(),
@@ -147,6 +170,32 @@ export function createDeskMcpServer(env) {
           return errorResult(error.code, error.message, error.retryable);
         }
         return errorResult("D1_OPERATION_FAILED", "The Container could not be moved.", true);
+      }
+    }
+  );
+
+  server.registerTool(
+    "desk_v2_update_container",
+    {
+      title: "Update Desk V2 Container",
+      description: "Updates only the descriptive fields of one active Desk V2 Container while preserving its identity, structure, lifecycle, subtree, and Tasks. Requires optimistic concurrency and an idempotency key.",
+      inputSchema: updateContainerInputSchema,
+      outputSchema: z.union([moveContainerOutputSchema, toolErrorSchema]),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      }
+    },
+    async input => {
+      try {
+        return result(await containerRepository.updateContainer(input));
+      } catch (error) {
+        if (error instanceof ContainerDomainError) {
+          return errorResult(error.code, error.message, error.retryable);
+        }
+        return errorResult("D1_OPERATION_FAILED", "The Container could not be updated.", true);
       }
     }
   );

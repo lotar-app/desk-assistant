@@ -122,10 +122,11 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
     await client.connect(transport);
     try {
       const tools = await client.listTools();
-      assert.equal(tools.tools.length, 5);
+      assert.equal(tools.tools.length, 6);
       assert.ok(tools.tools.some(tool => tool.name === "desk_v2_get_containers"));
       assert.ok(tools.tools.some(tool => tool.name === "desk_v2_create_container"));
       assert.ok(tools.tools.some(tool => tool.name === "desk_v2_move_container"));
+      assert.ok(tools.tools.some(tool => tool.name === "desk_v2_update_container"));
 
       const roots = await client.callTool({
         name: "desk_v2_get_containers",
@@ -408,6 +409,192 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
       assertQuery(`SELECT COUNT(*) AS value FROM containers
         WHERE container_id='MOVE-ROOT-A' AND parent_id IS NULL AND version=1;`,
       /value[^0-9]*1/i);
+
+      execute(`INSERT INTO containers
+        (container_id,parent_id,name,status,focus,owner,next_action,lifecycle_state,
+         version,created_at,updated_at)
+        VALUES
+        ('UPDATE-PARENT',NULL,'Update Parent','OPEN','Focus','Owner','Next','ACTIVE',1,
+         '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z'),
+        ('UPDATE-CHILD','UPDATE-PARENT','Update Child','OPEN',NULL,NULL,NULL,'ACTIVE',1,
+         '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z'),
+        ('UPDATE-RACE',NULL,'Update Race','OPEN',NULL,NULL,NULL,'ACTIVE',1,
+         '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z'),
+        ('UPDATE-SAME',NULL,'Update Same','OPEN',NULL,NULL,NULL,'ACTIVE',1,
+         '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z'),
+        ('UPDATE-HISTORY',NULL,'Update History','OPEN',NULL,NULL,NULL,'ACTIVE',1,
+         '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z'),
+        ('UPDATE-ROLLBACK',NULL,'Update Rollback','OPEN',NULL,NULL,NULL,'ACTIVE',1,
+         '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z');`);
+      execute(`INSERT INTO tasks
+        (task_id,container_id,title,status,lifecycle_state,version,created_at,updated_at)
+        VALUES ('UPDATE-TASK','UPDATE-CHILD','Update Task','OPEN','ACTIVE',1,
+        '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z');`);
+
+      const realUpdate = await client.callTool({
+        name: "desk_v2_update_container", arguments: {
+          idempotencyKey: "integration-update-real", containerId: "UPDATE-PARENT",
+          expectedVersion: 1, patch: { name: " Updated Parent ", status: "LEGACY_STATUS",
+            focus: " New Focus ", owner: " New Owner " }
+        }
+      });
+      assert.equal(realUpdate.structuredContent.changed, true);
+      assert.equal(realUpdate.structuredContent.replayed, false);
+      assert.equal(realUpdate.structuredContent.container.version, 2);
+      assert.equal(realUpdate.structuredContent.container.name, "Updated Parent");
+      assert.equal(realUpdate.structuredContent.container.status, "LEGACY_STATUS");
+      assert.equal(realUpdate.structuredContent.container.focus, "New Focus");
+      assert.equal(realUpdate.structuredContent.container.owner, "New Owner");
+      assert.equal(realUpdate.structuredContent.container.nextAction, "Next");
+      assert.equal(realUpdate.structuredContent.container.parentId, null);
+      assert.equal(realUpdate.structuredContent.container.lifecycleState, "ACTIVE");
+      assert.equal(realUpdate.structuredContent.container.archivedAt, null);
+      assert.equal(realUpdate.structuredContent.container.createdAt,
+        "2026-01-01T00:00:00.000Z");
+      assert.notEqual(realUpdate.structuredContent.container.updatedAt,
+        "2026-01-01T00:00:00.000Z");
+      assertQuery(`SELECT COUNT(*) AS value FROM containers
+        WHERE container_id='UPDATE-CHILD' AND parent_id='UPDATE-PARENT';`, /value[^0-9]*1/i);
+      assertQuery(`SELECT COUNT(*) AS value FROM tasks
+        WHERE task_id='UPDATE-TASK' AND container_id='UPDATE-CHILD' AND title='Update Task';`,
+      /value[^0-9]*1/i);
+
+      const cleared = await client.callTool({
+        name: "desk_v2_update_container", arguments: {
+          idempotencyKey: "integration-update-clear", containerId: "UPDATE-PARENT",
+          expectedVersion: 2, patch: { focus: null, owner: " ", nextAction: "" }
+        }
+      });
+      assert.deepEqual({ focus: cleared.structuredContent.container.focus,
+        owner: cleared.structuredContent.container.owner,
+        nextAction: cleared.structuredContent.container.nextAction },
+      { focus: null, owner: null, nextAction: null });
+      assert.equal(cleared.structuredContent.container.version, 3);
+
+      const updateNoOpInput = { idempotencyKey: "integration-update-noop",
+        containerId: "UPDATE-PARENT", expectedVersion: 3,
+        patch: { owner: null, focus: null } };
+      const updateNoOp = await client.callTool({
+        name: "desk_v2_update_container", arguments: updateNoOpInput
+      });
+      assert.equal(updateNoOp.structuredContent.changed, false);
+      assert.equal(updateNoOp.structuredContent.container.version, 3);
+      assert.equal(updateNoOp.structuredContent.container.updatedAt,
+        cleared.structuredContent.container.updatedAt);
+      assertQuery(`SELECT COUNT(*) AS value FROM mcp_idempotency
+        WHERE operation='desk_v2_update_container'
+          AND idempotency_key='integration-update-noop';`, /value[^0-9]*1/i);
+      const canonicalReplay = await client.callTool({
+        name: "desk_v2_update_container", arguments: {
+          ...updateNoOpInput, patch: { focus: null, owner: null }
+        }
+      });
+      assert.equal(canonicalReplay.structuredContent.replayed, true);
+      assert.deepEqual(canonicalReplay.structuredContent.container,
+        updateNoOp.structuredContent.container);
+
+      const stale = await client.callTool({
+        name: "desk_v2_update_container", arguments: {
+          idempotencyKey: "integration-update-stale", containerId: "UPDATE-PARENT",
+          expectedVersion: 2, patch: { name: "Stale" }
+        }
+      });
+      assert.equal(stale.structuredContent.error.code, "CONTAINER_VERSION_CONFLICT");
+      assertQuery(`SELECT COUNT(*) AS value FROM mcp_idempotency
+        WHERE idempotency_key='integration-update-stale';`, /value[^0-9]*0/i);
+
+      const race = await Promise.all([
+        client.callTool({ name: "desk_v2_update_container", arguments: {
+          idempotencyKey: "integration-update-race-a", containerId: "UPDATE-RACE",
+          expectedVersion: 1, patch: { focus: "A" }
+        } }),
+        client.callTool({ name: "desk_v2_update_container", arguments: {
+          idempotencyKey: "integration-update-race-b", containerId: "UPDATE-RACE",
+          expectedVersion: 1, patch: { owner: "B" }
+        } })
+      ]);
+      assert.equal(race.filter(result => result.isError !== true).length, 1);
+      assert.equal(race.find(result => result.isError === true)
+        .structuredContent.error.code, "CONTAINER_VERSION_CONFLICT");
+      assertQuery("SELECT version AS value FROM containers WHERE container_id='UPDATE-RACE';",
+        /value[^0-9]*2/i);
+      assertQuery(`SELECT COUNT(*) AS value FROM mcp_idempotency
+        WHERE idempotency_key IN ('integration-update-race-a','integration-update-race-b');`,
+      /value[^0-9]*1/i);
+
+      const sameInput = { idempotencyKey: "integration-update-same",
+        containerId: "UPDATE-SAME", expectedVersion: 1, patch: { name: "Same Updated" } };
+      const same = await Promise.all([
+        client.callTool({ name: "desk_v2_update_container", arguments: sameInput }),
+        client.callTool({ name: "desk_v2_update_container", arguments: sameInput })
+      ]);
+      assert.deepEqual(same.map(result => result.structuredContent.replayed).sort(), [false, true]);
+      assertQuery("SELECT version AS value FROM containers WHERE container_id='UPDATE-SAME';",
+        /value[^0-9]*2/i);
+      const sameConflict = await client.callTool({
+        name: "desk_v2_update_container", arguments: {
+          ...sameInput, patch: { name: "Different" }
+        }
+      });
+      assert.equal(sameConflict.structuredContent.error.code, "IDEMPOTENCY_KEY_CONFLICT");
+
+      const updateHistoricalInput = { idempotencyKey: "integration-update-history",
+        containerId: "UPDATE-HISTORY", expectedVersion: 1, patch: { name: "Historical" } };
+      const historicalUpdate = await client.callTool({
+        name: "desk_v2_update_container", arguments: updateHistoricalInput
+      });
+      const laterUpdate = await client.callTool({
+        name: "desk_v2_update_container", arguments: {
+          idempotencyKey: "integration-update-later", containerId: "UPDATE-HISTORY",
+          expectedVersion: 2, patch: { name: "Later" }
+        }
+      });
+      const movedHistory = await client.callTool({
+        name: "desk_v2_move_container", arguments: {
+          idempotencyKey: "integration-update-history-move", containerId: "UPDATE-HISTORY",
+          newParentId: "UPDATE-PARENT", expectedVersion: 3
+        }
+      });
+      assert.equal(movedHistory.structuredContent.container.version, 4);
+      const updateHistoricalReplay = await client.callTool({
+        name: "desk_v2_update_container", arguments: updateHistoricalInput
+      });
+      assert.equal(updateHistoricalReplay.structuredContent.replayed, true);
+      assert.deepEqual(updateHistoricalReplay.structuredContent.container,
+        historicalUpdate.structuredContent.container);
+      assert.equal(laterUpdate.structuredContent.container.name, "Later");
+      assertQuery(`SELECT COUNT(*) AS value FROM containers
+        WHERE container_id='UPDATE-HISTORY' AND name='Later'
+          AND parent_id='UPDATE-PARENT' AND version=4;`, /value[^0-9]*1/i);
+
+      const archivedUpdate = await client.callTool({
+        name: "desk_v2_update_container", arguments: {
+          idempotencyKey: "integration-update-archived",
+          containerId: "FIXTURE-ARCHIVED-PARENT", expectedVersion: 1,
+          patch: { name: "Rejected" }
+        }
+      });
+      assert.equal(archivedUpdate.structuredContent.error.code, "CONTAINER_ARCHIVED");
+      assertQuery(`SELECT COUNT(*) AS value FROM mcp_idempotency
+        WHERE idempotency_key='integration-update-archived';`, /value[^0-9]*0/i);
+
+      execute(`CREATE TRIGGER update_test_forced_failure
+        BEFORE UPDATE OF name ON containers
+        WHEN NEW.container_id='UPDATE-ROLLBACK'
+        BEGIN SELECT RAISE(ABORT, 'UPDATE_TEST_FAILURE'); END;`);
+      const updateFailure = await client.callTool({
+        name: "desk_v2_update_container", arguments: {
+          idempotencyKey: "integration-update-rollback", containerId: "UPDATE-ROLLBACK",
+          expectedVersion: 1, patch: { name: "Rejected" }
+        }
+      });
+      assert.equal(updateFailure.structuredContent.error.code, "D1_OPERATION_FAILED");
+      execute("DROP TRIGGER update_test_forced_failure;");
+      assertQuery(`SELECT COUNT(*) AS value FROM containers
+        WHERE container_id='UPDATE-ROLLBACK' AND name='Update Rollback' AND version=1;`,
+      /value[^0-9]*1/i);
+      assertQuery(`SELECT COUNT(*) AS value FROM mcp_idempotency
+        WHERE idempotency_key='integration-update-rollback';`, /value[^0-9]*0/i);
     } finally {
       await client.close();
     }
