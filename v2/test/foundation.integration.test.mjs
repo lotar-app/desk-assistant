@@ -122,11 +122,13 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
     await client.connect(transport);
     try {
       const tools = await client.listTools();
-      assert.equal(tools.tools.length, 6);
+      assert.equal(tools.tools.length, 8);
       assert.ok(tools.tools.some(tool => tool.name === "desk_v2_get_containers"));
       assert.ok(tools.tools.some(tool => tool.name === "desk_v2_create_container"));
       assert.ok(tools.tools.some(tool => tool.name === "desk_v2_move_container"));
       assert.ok(tools.tools.some(tool => tool.name === "desk_v2_update_container"));
+      assert.ok(tools.tools.some(tool => tool.name === "desk_v2_archive_container"));
+      assert.ok(tools.tools.some(tool => tool.name === "desk_v2_restore_container"));
 
       const roots = await client.callTool({
         name: "desk_v2_get_containers",
@@ -595,6 +597,145 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
       /value[^0-9]*1/i);
       assertQuery(`SELECT COUNT(*) AS value FROM mcp_idempotency
         WHERE idempotency_key='integration-update-rollback';`, /value[^0-9]*0/i);
+
+      execute(`INSERT INTO containers
+        (container_id,parent_id,name,status,lifecycle_state,version,created_at,updated_at,
+         archived_at)
+        VALUES
+        ('LIFE-LEAF',NULL,'Lifecycle Leaf','OPEN','ACTIVE',1,
+         '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z',NULL),
+        ('LIFE-ROOT',NULL,'Lifecycle Root','OPEN','ACTIVE',1,
+         '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z',NULL),
+        ('LIFE-CHILD','LIFE-ROOT','Lifecycle Child','OPEN','ARCHIVED',1,
+         '2026-01-01T00:00:00.000Z','2026-01-02T00:00:00.000Z',
+         '2026-01-02T00:00:00.000Z'),
+        ('LIFE-GRANDCHILD','LIFE-CHILD','Lifecycle Grandchild','OPEN','ACTIVE',1,
+         '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z',NULL),
+        ('LIFE-ARCHIVED-PARENT',NULL,'Lifecycle Archived Parent','OPEN','ARCHIVED',1,
+         '2026-01-01T00:00:00.000Z','2026-01-02T00:00:00.000Z',
+         '2026-01-02T00:00:00.000Z'),
+        ('LIFE-ARCHIVED-CHILD','LIFE-ARCHIVED-PARENT','Lifecycle Archived Child','OPEN',
+         'ARCHIVED',1,'2026-01-01T00:00:00.000Z','2026-01-02T00:00:00.000Z',
+         '2026-01-02T00:00:00.000Z'),
+        ('LIFE-ALL-ROOT',NULL,'All Archived Root','OPEN','ACTIVE',1,
+         '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z',NULL),
+        ('LIFE-ALL-CHILD','LIFE-ALL-ROOT','All Archived Child','OPEN','ARCHIVED',1,
+         '2026-01-01T00:00:00.000Z','2026-01-02T00:00:00.000Z',
+         '2026-01-02T00:00:00.000Z'),
+        ('LIFE-ROLLBACK',NULL,'Lifecycle Rollback','OPEN','ACTIVE',1,
+         '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z',NULL);`);
+      execute(`INSERT INTO tasks
+        (task_id,container_id,title,status,lifecycle_state,version,created_at,updated_at)
+        VALUES ('LIFE-TASK','LIFE-LEAF','Lifecycle Task','OPEN','ACTIVE',1,
+        '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z');`);
+
+      const archiveInput = { idempotencyKey: "integration-archive-real",
+        containerId: "LIFE-LEAF", expectedVersion: 1 };
+      const archived = await client.callTool({
+        name: "desk_v2_archive_container", arguments: archiveInput
+      });
+      assert.equal(archived.structuredContent.changed, true);
+      assert.equal(archived.structuredContent.container.lifecycleState, "ARCHIVED");
+      assert.equal(archived.structuredContent.container.version, 2);
+      assert.equal(archived.structuredContent.container.archivedAt,
+        archived.structuredContent.container.updatedAt);
+      assertQuery(`SELECT COUNT(*) AS value FROM tasks
+        WHERE task_id='LIFE-TASK' AND container_id='LIFE-LEAF' AND lifecycle_state='ACTIVE'
+          AND version=1;`, /value[^0-9]*1/i);
+      const archiveReplay = await client.callTool({
+        name: "desk_v2_archive_container", arguments: archiveInput
+      });
+      assert.equal(archiveReplay.structuredContent.replayed, true);
+      assert.deepEqual(archiveReplay.structuredContent.container,
+        archived.structuredContent.container);
+      const archiveConflict = await client.callTool({
+        name: "desk_v2_archive_container", arguments: {
+          ...archiveInput, expectedVersion: 2
+        }
+      });
+      assert.equal(archiveConflict.structuredContent.error.code, "IDEMPOTENCY_KEY_CONFLICT");
+      const archiveNoOp = await client.callTool({
+        name: "desk_v2_archive_container", arguments: {
+          idempotencyKey: "integration-archive-noop", containerId: "LIFE-LEAF",
+          expectedVersion: 2
+        }
+      });
+      assert.equal(archiveNoOp.structuredContent.changed, false);
+      assert.equal(archiveNoOp.structuredContent.container.updatedAt,
+        archived.structuredContent.container.updatedAt);
+      const descendantBlocked = await client.callTool({
+        name: "desk_v2_archive_container", arguments: {
+          idempotencyKey: "integration-archive-descendant", containerId: "LIFE-ROOT",
+          expectedVersion: 1
+        }
+      });
+      assert.equal(descendantBlocked.structuredContent.error.code,
+        "CONTAINER_HAS_ACTIVE_DESCENDANTS");
+      assertQuery(`SELECT COUNT(*) AS value FROM mcp_idempotency
+        WHERE idempotency_key='integration-archive-descendant';`, /value[^0-9]*0/i);
+      const allArchived = await client.callTool({
+        name: "desk_v2_archive_container", arguments: {
+          idempotencyKey: "integration-archive-all-descendants",
+          containerId: "LIFE-ALL-ROOT", expectedVersion: 1
+        }
+      });
+      assert.equal(allArchived.structuredContent.changed, true);
+      assertQuery(`SELECT COUNT(*) AS value FROM containers
+        WHERE container_id='LIFE-ALL-CHILD' AND lifecycle_state='ARCHIVED' AND version=1;`,
+      /value[^0-9]*1/i);
+
+      const restoreBlocked = await client.callTool({
+        name: "desk_v2_restore_container", arguments: {
+          idempotencyKey: "integration-restore-parent", containerId: "LIFE-ARCHIVED-CHILD",
+          expectedVersion: 1
+        }
+      });
+      assert.equal(restoreBlocked.structuredContent.error.code, "CONTAINER_PARENT_ARCHIVED");
+      const restored = await client.callTool({
+        name: "desk_v2_restore_container", arguments: {
+          idempotencyKey: "integration-restore-real", containerId: "LIFE-LEAF",
+          expectedVersion: 2
+        }
+      });
+      assert.equal(restored.structuredContent.changed, true);
+      assert.equal(restored.structuredContent.container.lifecycleState, "ACTIVE");
+      assert.equal(restored.structuredContent.container.archivedAt, null);
+      assert.equal(restored.structuredContent.container.version, 3);
+      const restoreNoOp = await client.callTool({
+        name: "desk_v2_restore_container", arguments: {
+          idempotencyKey: "integration-restore-noop", containerId: "LIFE-LEAF",
+          expectedVersion: 3
+        }
+      });
+      assert.equal(restoreNoOp.structuredContent.changed, false);
+      const restoredUnderActiveParent = await client.callTool({
+        name: "desk_v2_restore_container", arguments: {
+          idempotencyKey: "integration-restore-active-parent", containerId: "LIFE-CHILD",
+          expectedVersion: 1
+        }
+      });
+      assert.equal(restoredUnderActiveParent.structuredContent.changed, true);
+      assert.equal(restoredUnderActiveParent.structuredContent.container.parentId, "LIFE-ROOT");
+      assertQuery(`SELECT COUNT(*) AS value FROM containers
+        WHERE container_id='LIFE-GRANDCHILD' AND parent_id='LIFE-CHILD'
+          AND lifecycle_state='ACTIVE' AND version=1;`, /value[^0-9]*1/i);
+      execute(`CREATE TRIGGER lifecycle_test_forced_failure
+        BEFORE UPDATE OF lifecycle_state ON containers
+        WHEN NEW.container_id='LIFE-ROLLBACK'
+        BEGIN SELECT RAISE(ABORT, 'LIFECYCLE_TEST_FAILURE'); END;`);
+      const lifecycleFailure = await client.callTool({
+        name: "desk_v2_archive_container", arguments: {
+          idempotencyKey: "integration-lifecycle-rollback", containerId: "LIFE-ROLLBACK",
+          expectedVersion: 1
+        }
+      });
+      assert.equal(lifecycleFailure.structuredContent.error.code, "D1_OPERATION_FAILED");
+      execute("DROP TRIGGER lifecycle_test_forced_failure;");
+      assertQuery(`SELECT COUNT(*) AS value FROM containers
+        WHERE container_id='LIFE-ROLLBACK' AND lifecycle_state='ACTIVE' AND version=1
+          AND archived_at IS NULL;`, /value[^0-9]*1/i);
+      assertQuery(`SELECT COUNT(*) AS value FROM mcp_idempotency
+        WHERE idempotency_key='integration-lifecycle-rollback';`, /value[^0-9]*0/i);
     } finally {
       await client.close();
     }

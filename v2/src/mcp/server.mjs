@@ -109,6 +109,11 @@ const updateContainerInputSchema = z.object({
   expectedVersion: expectedVersionSchema,
   patch: updatePatchSchema
 }).strict();
+const lifecycleContainerInputSchema = z.object({
+  idempotencyKey: idempotencyKeySchema,
+  containerId: moveContainerIdSchema,
+  expectedVersion: expectedVersionSchema
+}).strict();
 const toolErrorSchema = z.object({
   error: z.object({
     code: z.string(),
@@ -196,6 +201,58 @@ export function createDeskMcpServer(env) {
           return errorResult(error.code, error.message, error.retryable);
         }
         return errorResult("D1_OPERATION_FAILED", "The Container could not be updated.", true);
+      }
+    }
+  );
+
+  server.registerTool(
+    "desk_v2_archive_container",
+    {
+      title: "Archive Desk V2 Container",
+      description: "Archives one Desk V2 Container without changing its subtree or Tasks. Active descendants block a real transition. Requires optimistic concurrency and an idempotency key.",
+      inputSchema: lifecycleContainerInputSchema,
+      outputSchema: z.union([moveContainerOutputSchema, toolErrorSchema]),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false
+      }
+    },
+    async input => {
+      try {
+        return result(await containerRepository.archiveContainer(input));
+      } catch (error) {
+        if (error instanceof ContainerDomainError) {
+          return errorResult(error.code, error.message, error.retryable);
+        }
+        return errorResult("D1_OPERATION_FAILED", "The Container could not be archived.", true);
+      }
+    }
+  );
+
+  server.registerTool(
+    "desk_v2_restore_container",
+    {
+      title: "Restore Desk V2 Container",
+      description: "Restores one Desk V2 Container when it is root or its parent is active, without changing its subtree or Tasks. Requires optimistic concurrency and an idempotency key.",
+      inputSchema: lifecycleContainerInputSchema,
+      outputSchema: z.union([moveContainerOutputSchema, toolErrorSchema]),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      }
+    },
+    async input => {
+      try {
+        return result(await containerRepository.restoreContainer(input));
+      } catch (error) {
+        if (error instanceof ContainerDomainError) {
+          return errorResult(error.code, error.message, error.retryable);
+        }
+        return errorResult("D1_OPERATION_FAILED", "The Container could not be restored.", true);
       }
     }
   );

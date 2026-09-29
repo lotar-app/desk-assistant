@@ -27,11 +27,13 @@ test("client MCP ufficiale esegue handshake, discovery, read e write isolata", a
   try {
     const listed = await client.listTools();
     assert.deepEqual(listed.tools.map(tool => tool.name).sort(), [
+      "desk_v2_archive_container",
       "desk_v2_capability_read",
       "desk_v2_capability_write",
       "desk_v2_create_container",
       "desk_v2_get_containers",
       "desk_v2_move_container",
+      "desk_v2_restore_container",
       "desk_v2_update_container"
     ]);
     const readTool = listed.tools.find(tool => tool.name === "desk_v2_capability_read");
@@ -40,6 +42,8 @@ test("client MCP ufficiale esegue handshake, discovery, read e write isolata", a
     const createTool = listed.tools.find(tool => tool.name === "desk_v2_create_container");
     const moveTool = listed.tools.find(tool => tool.name === "desk_v2_move_container");
     const updateTool = listed.tools.find(tool => tool.name === "desk_v2_update_container");
+    const archiveTool = listed.tools.find(tool => tool.name === "desk_v2_archive_container");
+    const restoreTool = listed.tools.find(tool => tool.name === "desk_v2_restore_container");
     assert.equal(readTool.annotations.readOnlyHint, true);
     assert.equal(writeTool.annotations.readOnlyHint, false);
     assert.equal(writeTool.annotations.destructiveHint, false);
@@ -62,6 +66,18 @@ test("client MCP ufficiale esegue handshake, discovery, read e write isolata", a
       openWorldHint: false
     });
     assert.deepEqual(updateTool.annotations, {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    });
+    assert.deepEqual(archiveTool.annotations, {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: false
+    });
+    assert.deepEqual(restoreTool.annotations, {
       readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: true,
@@ -795,6 +811,189 @@ test("container update classifica dominio, concorrenza e rollback sanitizzato", 
   });
 });
 
+test("container archive e restore applicano transizioni, no-op e replay storico", async () => {
+  const database = fakeDb([container({ id: "TARGET", name: "Target" })]);
+  await withClient(database, async client => {
+    const archived = await callLifecycle(client, "desk_v2_archive_container", {
+      idempotencyKey: "archive-1", containerId: "TARGET", expectedVersion: 1
+    });
+    assert.equal(archived.changed, true);
+    assert.equal(archived.container.lifecycleState, "ARCHIVED");
+    assert.equal(archived.container.version, 2);
+    assert.equal(archived.container.archivedAt, archived.container.updatedAt);
+    assert.equal((await callLifecycle(client, "desk_v2_archive_container", {
+      idempotencyKey: "archive-1", containerId: "TARGET", expectedVersion: 1
+    })).replayed, true);
+
+    const archiveNoOp = await callLifecycle(client, "desk_v2_archive_container", {
+      idempotencyKey: "archive-noop", containerId: "TARGET", expectedVersion: 2
+    });
+    assert.equal(archiveNoOp.changed, false);
+    assert.equal(archiveNoOp.container.updatedAt, archived.container.updatedAt);
+
+    const restored = await callLifecycle(client, "desk_v2_restore_container", {
+      idempotencyKey: "restore-1", containerId: "TARGET", expectedVersion: 2
+    });
+    assert.equal(restored.changed, true);
+    assert.equal(restored.container.lifecycleState, "ACTIVE");
+    assert.equal(restored.container.archivedAt, null);
+    assert.equal(restored.container.version, 3);
+
+    const restoreNoOp = await callLifecycle(client, "desk_v2_restore_container", {
+      idempotencyKey: "restore-noop", containerId: "TARGET", expectedVersion: 3
+    });
+    assert.equal(restoreNoOp.changed, false);
+    database.updateContainer("TARGET", { name: "Later", version: 4 });
+    const historical = await callLifecycle(client, "desk_v2_archive_container", {
+      idempotencyKey: "archive-1", containerId: "TARGET", expectedVersion: 1
+    });
+    assert.deepEqual(historical.container, archived.container);
+  });
+});
+
+test("container archive e restore rispettano subtree, parent guard, errori e concorrenza", async () => {
+  const database = fakeDb([
+    container({ id: "ROOT", name: "Root" }),
+    container({ id: "CHILD", parentId: "ROOT", name: "Child", lifecycle: "ARCHIVED" }),
+    container({ id: "GRANDCHILD", parentId: "CHILD", name: "Grandchild" }),
+    container({ id: "ARCHIVED-PARENT", name: "Archived parent", lifecycle: "ARCHIVED" }),
+    container({ id: "ARCHIVED-CHILD", parentId: "ARCHIVED-PARENT", name: "Archived child",
+      lifecycle: "ARCHIVED" })
+  ]);
+  await withClient(database, async client => {
+    const blocked = await client.callTool({ name: "desk_v2_archive_container", arguments: {
+      idempotencyKey: "blocked-descendant", containerId: "ROOT", expectedVersion: 1
+    } });
+    assert.equal(blocked.structuredContent.error.code, "CONTAINER_HAS_ACTIVE_DESCENDANTS");
+    const parentBlocked = await client.callTool({ name: "desk_v2_restore_container", arguments: {
+      idempotencyKey: "blocked-parent", containerId: "ARCHIVED-CHILD", expectedVersion: 1
+    } });
+    assert.equal(parentBlocked.structuredContent.error.code, "CONTAINER_PARENT_ARCHIVED");
+    const version = await client.callTool({ name: "desk_v2_archive_container", arguments: {
+      idempotencyKey: "wrong-version", containerId: "CHILD", expectedVersion: 2
+    } });
+    assert.equal(version.structuredContent.error.code, "CONTAINER_VERSION_CONFLICT");
+    const missing = await client.callTool({ name: "desk_v2_restore_container", arguments: {
+      idempotencyKey: "missing", containerId: "MISSING", expectedVersion: 1
+    } });
+    assert.equal(missing.structuredContent.error.code, "CONTAINER_NOT_FOUND");
+
+    const concurrent = await Promise.all([
+      client.callTool({ name: "desk_v2_restore_container", arguments: {
+        idempotencyKey: "restore-a", containerId: "CHILD", expectedVersion: 1
+      } }),
+      client.callTool({ name: "desk_v2_restore_container", arguments: {
+        idempotencyKey: "restore-b", containerId: "CHILD", expectedVersion: 1
+      } })
+    ]);
+    assert.equal(concurrent.filter(result => result.isError !== true).length, 1);
+    assert.equal(concurrent.find(result => result.isError === true)
+      .structuredContent.error.code, "CONTAINER_VERSION_CONFLICT");
+    assert.equal(database.getContainer("GRANDCHILD").lifecycle_state, "ACTIVE");
+  });
+});
+
+test("container lifecycle valida input strict, conflitto idempotente e rollback", async () => {
+  const database = fakeDb([container({ id: "LEGACY-ID", name: "Legacy" })]);
+  await withClient(database, async client => {
+    for (const arguments_ of [
+      { idempotencyKey: "", containerId: "LEGACY-ID", expectedVersion: 1 },
+      { idempotencyKey: "valid", containerId: " ", expectedVersion: 1 },
+      { idempotencyKey: "valid", containerId: "LEGACY-ID", expectedVersion: 0 },
+      { idempotencyKey: "valid", containerId: "LEGACY-ID", expectedVersion: "1" },
+      { idempotencyKey: "valid", containerId: "LEGACY-ID", expectedVersion: 1, recursive: true }
+    ]) {
+      const result = await client.callTool({
+        name: "desk_v2_archive_container", arguments: arguments_
+      });
+      assert.equal(result.isError, true);
+    }
+    const input = { idempotencyKey: "conflict", containerId: " LEGACY-ID ",
+      expectedVersion: 1 };
+    const first = await callLifecycle(client, "desk_v2_archive_container", input);
+    assert.equal(first.container.containerId, "LEGACY-ID");
+    const conflict = await client.callTool({ name: "desk_v2_archive_container", arguments: {
+      ...input, expectedVersion: 2
+    } });
+    assert.equal(conflict.structuredContent.error.code, "IDEMPOTENCY_KEY_CONFLICT");
+  });
+
+  const failing = fakeDb([container({ id: "ROLLBACK", name: "Rollback" })],
+    { failNextLifecycleBatch: true });
+  await withClient(failing, async client => {
+    const result = await client.callTool({ name: "desk_v2_archive_container", arguments: {
+      idempotencyKey: "rollback", containerId: "ROLLBACK", expectedVersion: 1
+    } });
+    assert.equal(result.structuredContent.error.code, "D1_OPERATION_FAILED");
+    assert.equal(result.structuredContent.error.retryable, true);
+    assert.equal(failing.getContainer("ROLLBACK").lifecycle_state, "ACTIVE");
+    assert.equal(failing.snapshot().idempotency, 0);
+  });
+});
+
+test("container lifecycle serializza Archive/Restore contro Update e Move", async () => {
+  const database = fakeDb([
+    container({ id: "PARENT", name: "Parent" }),
+    container({ id: "ARCHIVE-UPDATE", name: "Archive Update" }),
+    container({ id: "ARCHIVE-MOVE", name: "Archive Move" }),
+    container({ id: "ARCHIVE-RESTORE", name: "Archive Restore" }),
+    container({ id: "RESTORE-UPDATE", name: "Restore Update", lifecycle: "ARCHIVED" }),
+    container({ id: "RESTORE-MOVE", name: "Restore Move", lifecycle: "ARCHIVED" }),
+    container({ id: "IMPOSSIBLE-PARENT", name: "Impossible Parent", lifecycle: "ARCHIVED" }),
+    container({ id: "IMPOSSIBLE-ACTIVE", parentId: "IMPOSSIBLE-PARENT",
+      name: "Impossible Active" })
+  ]);
+  await withClient(database, async client => {
+    await callLifecycle(client, "desk_v2_archive_container", {
+      idempotencyKey: "au-archive", containerId: "ARCHIVE-UPDATE", expectedVersion: 1
+    });
+    const staleUpdate = await client.callTool({ name: "desk_v2_update_container", arguments: {
+      idempotencyKey: "au-update", containerId: "ARCHIVE-UPDATE", expectedVersion: 1,
+      patch: { name: "Rejected" }
+    } });
+    assert.equal(staleUpdate.isError, true);
+
+    await callLifecycle(client, "desk_v2_archive_container", {
+      idempotencyKey: "am-archive", containerId: "ARCHIVE-MOVE", expectedVersion: 1
+    });
+    const staleMove = await client.callTool({ name: "desk_v2_move_container", arguments: {
+      idempotencyKey: "am-move", containerId: "ARCHIVE-MOVE", newParentId: "PARENT",
+      expectedVersion: 1
+    } });
+    assert.equal(staleMove.isError, true);
+
+    await callLifecycle(client, "desk_v2_archive_container", {
+      idempotencyKey: "ar-archive", containerId: "ARCHIVE-RESTORE", expectedVersion: 1
+    });
+    const staleRestore = await client.callTool({ name: "desk_v2_restore_container", arguments: {
+      idempotencyKey: "ar-restore", containerId: "ARCHIVE-RESTORE", expectedVersion: 1
+    } });
+    assert.equal(staleRestore.structuredContent.error.code, "CONTAINER_VERSION_CONFLICT");
+
+    for (const [id, operation] of [["RESTORE-UPDATE", "update"], ["RESTORE-MOVE", "move"]]) {
+      await callLifecycle(client, "desk_v2_restore_container", {
+        idempotencyKey: `${id}-restore`, containerId: id, expectedVersion: 1
+      });
+      const result = operation === "update"
+        ? await client.callTool({ name: "desk_v2_update_container", arguments: {
+          idempotencyKey: `${id}-write`, containerId: id, expectedVersion: 1,
+          patch: { owner: "Rejected" }
+        } })
+        : await client.callTool({ name: "desk_v2_move_container", arguments: {
+          idempotencyKey: `${id}-write`, containerId: id, expectedVersion: 1,
+          newParentId: "PARENT"
+        } });
+      assert.equal(result.structuredContent.error.code, "CONTAINER_VERSION_CONFLICT");
+    }
+
+    const noOp = await callLifecycle(client, "desk_v2_restore_container", {
+      idempotencyKey: "restore-impossible-noop", containerId: "IMPOSSIBLE-ACTIVE",
+      expectedVersion: 1
+    });
+    assert.equal(noOp.changed, false);
+  });
+});
+
 function request(body, token) {
   const headers = { "content-type": "application/json", accept: "application/json, text/event-stream" };
   if (token) headers.authorization = `Bearer ${token}`;
@@ -855,6 +1054,12 @@ async function callUpdate(client, args) {
   return result.structuredContent;
 }
 
+async function callLifecycle(client, name, args) {
+  const result = await client.callTool({ name, arguments: args });
+  assert.notEqual(result.isError, true, JSON.stringify(result.structuredContent));
+  return result.structuredContent;
+}
+
 function container({ id, parentId = null, name, lifecycle = "ACTIVE", focus = null,
   owner = null, nextAction = null }) {
   return {
@@ -881,6 +1086,7 @@ function fakeDb(containers = [], options = {}) {
   let collideNextCreate = options.collideNextCreate === true;
   let failNextMoveBatch = options.failNextMoveBatch === true;
   let failNextUpdateBatch = options.failNextUpdateBatch === true;
+  let failNextLifecycleBatch = options.failNextLifecycleBatch === true;
   let collidedId = null;
   const database = {
     prepare(sql) {
@@ -920,6 +1126,10 @@ function fakeDb(containers = [], options = {}) {
         },
         async all() {
           if (/WITH RECURSIVE descendants/i.test(sql)) {
+            if (/item\.lifecycle_state = 'ACTIVE'/i.test(sql)) {
+              return { results: hasActiveDescendant(state.containers, values[0])
+                ? [{ found: 1 }] : [] };
+            }
             return { results: isDescendant(state.containers, values[0], values[1])
               ? [{ found: 1 }] : [] };
           }
@@ -981,6 +1191,13 @@ function fakeDb(containers = [], options = {}) {
           return updateBatch({ statements, state, audit, before, options: {
             get failNextUpdateBatch() { return failNextUpdateBatch; },
             clearFailure() { failNextUpdateBatch = false; }
+          } });
+        }
+        if (operation === "desk_v2_archive_container"
+          || operation === "desk_v2_restore_container") {
+          return lifecycleBatch({ statements, state, audit, before, options: {
+            get failNextLifecycleBatch() { return failNextLifecycleBatch; },
+            clearFailure() { failNextLifecycleBatch = false; }
           } });
         }
         const existing = state.idempotency.find(row => (
@@ -1187,6 +1404,79 @@ function updateBatch({ statements, state, audit, before, options }) {
     state.idempotency = before.idempotency;
     throw error;
   }
+}
+
+function lifecycleBatch({ statements, state, audit, before, options }) {
+  try {
+    const values = statements[0]._values();
+    const [operation, key, hash, attemptId, resourceType, resourceId,
+      responseJson, completedAt, sourceId, expectedVersion] = values;
+    const existing = state.idempotency.find(row => row.operation === operation
+      && row.idempotency_key === key);
+    const source = state.containers.find(row => row.container_id === sourceId);
+    const archive = operation === "desk_v2_archive_container";
+    const parent = source?.parent_id === null ? null
+      : state.containers.find(row => row.container_id === source?.parent_id);
+    const guard = archive
+      ? source?.lifecycle_state === "ARCHIVED" || !hasActiveDescendant(state.containers, sourceId)
+      : source?.lifecycle_state === "ACTIVE" || source?.parent_id === null
+        || parent?.lifecycle_state === "ACTIVE";
+    const valid = source?.version === expectedVersion && guard;
+    if (!existing && valid) {
+      state.idempotency.push({ operation, idempotency_key: key, request_hash: hash,
+        attempt_id: attemptId, resource_type: resourceType, resource_id: resourceId,
+        response_json: responseJson, completed_at: completedAt });
+    }
+    const acquired = state.idempotency.find(row => row.operation === operation
+      && row.idempotency_key === key && row.request_hash === hash
+      && row.attempt_id === attemptId);
+    if (acquired && options.failNextLifecycleBatch) {
+      options.clearFailure();
+      throw new Error("synthetic lifecycle failure");
+    }
+    const response = acquired ? JSON.parse(responseJson) : null;
+    if (acquired && response.changed) {
+      const value = response.container;
+      Object.assign(source, { lifecycle_state: value.lifecycleState, version: value.version,
+        updated_at: value.updatedAt, archived_at: value.archivedAt });
+      audit.writes += 2;
+    } else if (acquired) {
+      audit.writes += 1;
+    }
+    const record = state.idempotency.find(row => row.operation === operation
+      && row.idempotency_key === key);
+    let outcome = "UNEXPECTED_STATE";
+    if (record && record.request_hash !== hash) outcome = "IDEMPOTENCY_CONFLICT";
+    else if (record && record.attempt_id === attemptId) outcome = "COMPLETED";
+    else if (record && record.request_hash === hash) outcome = "REPLAY";
+    else if (!source) outcome = "CONTAINER_NOT_FOUND";
+    else if (source.version !== expectedVersion) outcome = "VERSION_CONFLICT";
+    else if (archive && hasActiveDescendant(state.containers, sourceId)) {
+      outcome = "ACTIVE_DESCENDANTS";
+    } else if (!archive && source.parent_id !== null
+      && parent?.lifecycle_state === "ARCHIVED") outcome = "PARENT_ARCHIVED";
+    return [{ success: true }, { success: true }, { success: true,
+      results: [{ outcome, response_json: record?.response_json ?? null }] }];
+  } catch (error) {
+    state.containers = before.containers;
+    state.tasks = before.tasks;
+    state.markers = before.markers;
+    state.idempotency = before.idempotency;
+    throw error;
+  }
+}
+
+function hasActiveDescendant(containers, ancestorId) {
+  const pending = containers.filter(row => row.parent_id === ancestorId);
+  const visited = new Set();
+  while (pending.length) {
+    const row = pending.shift();
+    if (row.lifecycle_state === "ACTIVE") return true;
+    if (visited.has(row.container_id)) continue;
+    visited.add(row.container_id);
+    pending.push(...containers.filter(item => item.parent_id === row.container_id));
+  }
+  return false;
 }
 
 function isDescendant(containers, ancestorId, candidateId) {
