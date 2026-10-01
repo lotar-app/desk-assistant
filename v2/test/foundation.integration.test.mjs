@@ -16,6 +16,7 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
   const port = 8900 + (process.pid % 500);
   const token = randomUUID();
   let workerProcess;
+  let client;
 
   try {
     command(["d1", "migrations", "apply", "DESK_V2_DB", "--local",
@@ -114,22 +115,21 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
     assert.equal((await fetch(`http://127.0.0.1:${port}/missing`)).status, 404);
     assert.equal((await fetch(`http://127.0.0.1:${port}/health`, { method: "POST" })).status, 405);
 
-    const client = new Client({ name: "desk-v2-integration-test", version: "1.0.0" });
-    const transport = new StreamableHTTPClientTransport(
+    client = new Client({ name: "desk-v2-integration-test", version: "1.0.0" });
+    let transport = new StreamableHTTPClientTransport(
       new URL(`http://127.0.0.1:${port}/mcp`),
       { authProvider: { token: async () => token } }
     );
     await client.connect(transport);
     try {
       const tools = await client.listTools();
-      assert.equal(tools.tools.length, 8);
+      assert.equal(tools.tools.length, 9);
       assert.ok(tools.tools.some(tool => tool.name === "desk_v2_get_containers"));
       assert.ok(tools.tools.some(tool => tool.name === "desk_v2_create_container"));
       assert.ok(tools.tools.some(tool => tool.name === "desk_v2_move_container"));
       assert.ok(tools.tools.some(tool => tool.name === "desk_v2_update_container"));
       assert.ok(tools.tools.some(tool => tool.name === "desk_v2_archive_container"));
       assert.ok(tools.tools.some(tool => tool.name === "desk_v2_restore_container"));
-
       const roots = await client.callTool({
         name: "desk_v2_get_containers",
         arguments: {}
@@ -412,6 +412,33 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
         WHERE container_id='MOVE-ROOT-A' AND parent_id IS NULL AND version=1;`,
       /value[^0-9]*1/i);
 
+      await client.close();
+      client = undefined;
+      workerProcess.kill("SIGTERM");
+      await new Promise(resolve => workerProcess.once("exit", resolve));
+      workerProcess = undefined;
+
+      workerProcess = spawn(wrangler, ["dev", "--local", "--persist-to", persistence,
+        "--port", String(port), "--ip", "127.0.0.1", "--var",
+        `DESK_V2_MCP_BEARER_TOKEN:${token}`], {
+        cwd: root,
+        env: sanitizedEnvironment(),
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+      workerProcess.stdout.resume();
+      workerProcess.stderr.pipe(process.stderr);
+      const resumedHealth = await waitForResponse(`http://127.0.0.1:${port}/health`);
+      assert.equal(resumedHealth.status, 200);
+      const resumedReady = await fetch(`http://127.0.0.1:${port}/ready`);
+      assert.equal(resumedReady.status, 200);
+
+      client = new Client({ name: "desk-v2-integration-test", version: "1.0.0" });
+      transport = new StreamableHTTPClientTransport(
+        new URL(`http://127.0.0.1:${port}/mcp`),
+        { authProvider: { token: async () => token } }
+      );
+      await client.connect(transport);
+
       execute(`INSERT INTO containers
         (container_id,parent_id,name,status,focus,owner,next_action,lifecycle_state,
          version,created_at,updated_at)
@@ -598,6 +625,33 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
       assertQuery(`SELECT COUNT(*) AS value FROM mcp_idempotency
         WHERE idempotency_key='integration-update-rollback';`, /value[^0-9]*0/i);
 
+      await client.close();
+      client = undefined;
+      workerProcess.kill("SIGTERM");
+      await new Promise(resolve => workerProcess.once("exit", resolve));
+      workerProcess = undefined;
+
+      workerProcess = spawn(wrangler, ["dev", "--local", "--persist-to", persistence,
+        "--port", String(port), "--ip", "127.0.0.1", "--var",
+        `DESK_V2_MCP_BEARER_TOKEN:${token}`], {
+        cwd: root,
+        env: sanitizedEnvironment(),
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+      workerProcess.stdout.resume();
+      workerProcess.stderr.pipe(process.stderr);
+      const lifecycleHealth = await waitForResponse(`http://127.0.0.1:${port}/health`);
+      assert.equal(lifecycleHealth.status, 200);
+      const lifecycleReady = await fetch(`http://127.0.0.1:${port}/ready`);
+      assert.equal(lifecycleReady.status, 200);
+
+      client = new Client({ name: "desk-v2-integration-test", version: "1.0.0" });
+      transport = new StreamableHTTPClientTransport(
+        new URL(`http://127.0.0.1:${port}/mcp`),
+        { authProvider: { token: async () => token } }
+      );
+      await client.connect(transport);
+
       execute(`INSERT INTO containers
         (container_id,parent_id,name,status,lifecycle_state,version,created_at,updated_at,
          archived_at)
@@ -606,9 +660,8 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
          '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z',NULL),
         ('LIFE-ROOT',NULL,'Lifecycle Root','OPEN','ACTIVE',1,
          '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z',NULL),
-        ('LIFE-CHILD','LIFE-ROOT','Lifecycle Child','OPEN','ARCHIVED',1,
-         '2026-01-01T00:00:00.000Z','2026-01-02T00:00:00.000Z',
-         '2026-01-02T00:00:00.000Z'),
+        ('LIFE-CHILD','LIFE-ROOT','Lifecycle Child','OPEN','ACTIVE',1,
+         '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z',NULL),
         ('LIFE-GRANDCHILD','LIFE-CHILD','Lifecycle Grandchild','OPEN','ACTIVE',1,
          '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z',NULL),
         ('LIFE-ARCHIVED-PARENT',NULL,'Lifecycle Archived Parent','OPEN','ARCHIVED',1,
@@ -628,6 +681,23 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
         (task_id,container_id,title,status,lifecycle_state,version,created_at,updated_at)
         VALUES ('LIFE-TASK','LIFE-LEAF','Lifecycle Task','OPEN','ACTIVE',1,
         '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z');`);
+
+      const descendantBlocked = await client.callTool({
+        name: "desk_v2_archive_container", arguments: {
+          idempotencyKey: "integration-archive-descendant", containerId: "LIFE-ROOT",
+          expectedVersion: 1
+        }
+      });
+      assert.equal(descendantBlocked.structuredContent.error.code,
+        "CONTAINER_HAS_ACTIVE_DESCENDANTS");
+      assertQuery(`SELECT COUNT(*) AS value FROM mcp_idempotency
+        WHERE idempotency_key='integration-archive-descendant';`, /value[^0-9]*0/i);
+      execute(`UPDATE containers SET lifecycle_state='ARCHIVED',
+        updated_at='2026-01-02T00:00:00.000Z', archived_at='2026-01-02T00:00:00.000Z'
+        WHERE container_id='LIFE-GRANDCHILD';`);
+      execute(`UPDATE containers SET lifecycle_state='ARCHIVED',
+        updated_at='2026-01-02T00:00:00.000Z', archived_at='2026-01-02T00:00:00.000Z'
+        WHERE container_id='LIFE-CHILD';`);
 
       const archiveInput = { idempotencyKey: "integration-archive-real",
         containerId: "LIFE-LEAF", expectedVersion: 1 };
@@ -663,16 +733,6 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
       assert.equal(archiveNoOp.structuredContent.changed, false);
       assert.equal(archiveNoOp.structuredContent.container.updatedAt,
         archived.structuredContent.container.updatedAt);
-      const descendantBlocked = await client.callTool({
-        name: "desk_v2_archive_container", arguments: {
-          idempotencyKey: "integration-archive-descendant", containerId: "LIFE-ROOT",
-          expectedVersion: 1
-        }
-      });
-      assert.equal(descendantBlocked.structuredContent.error.code,
-        "CONTAINER_HAS_ACTIVE_DESCENDANTS");
-      assertQuery(`SELECT COUNT(*) AS value FROM mcp_idempotency
-        WHERE idempotency_key='integration-archive-descendant';`, /value[^0-9]*0/i);
       const allArchived = await client.callTool({
         name: "desk_v2_archive_container", arguments: {
           idempotencyKey: "integration-archive-all-descendants",
@@ -718,7 +778,8 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
       assert.equal(restoredUnderActiveParent.structuredContent.container.parentId, "LIFE-ROOT");
       assertQuery(`SELECT COUNT(*) AS value FROM containers
         WHERE container_id='LIFE-GRANDCHILD' AND parent_id='LIFE-CHILD'
-          AND lifecycle_state='ACTIVE' AND version=1;`, /value[^0-9]*1/i);
+          AND lifecycle_state='ARCHIVED' AND version=1
+          AND archived_at='2026-01-02T00:00:00.000Z';`, /value[^0-9]*1/i);
       execute(`CREATE TRIGGER lifecycle_test_forced_failure
         BEFORE UPDATE OF lifecycle_state ON containers
         WHEN NEW.container_id='LIFE-ROLLBACK'
@@ -737,7 +798,7 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
       assertQuery(`SELECT COUNT(*) AS value FROM mcp_idempotency
         WHERE idempotency_key='integration-lifecycle-rollback';`, /value[^0-9]*0/i);
     } finally {
-      await client.close();
+      if (client) await client.close().catch(() => {});
     }
   } finally {
     if (workerProcess && !workerProcess.killed) workerProcess.kill("SIGTERM");
@@ -758,6 +819,188 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
       "--persist-to", persistence, "--command", compact(sql)]);
     assert.notEqual(result.status, 0, `SQL unexpectedly succeeded: ${sql}`);
     assert.match(`${result.stdout}\n${result.stderr}`, pattern);
+  }
+});
+
+test("task read foundation usa Worker e transport MCP isolati", async () => {
+  const persistence = fs.mkdtempSync(path.join(os.tmpdir(), "desk-v2-task-read-"));
+  const port = 9400 + (process.pid % 300);
+  const token = randomUUID();
+  let workerProcess;
+  let client;
+
+  const localCommand = args => command([...args, "--persist-to", persistence]);
+  const execute = sql => localCommand([
+    "d1", "execute", "DESK_V2_DB", "--local", "--command", compact(sql)
+  ]);
+  const assertQuery = (sql, pattern) => assert.match(execute(sql), pattern);
+
+  try {
+    command(["d1", "migrations", "apply", "DESK_V2_DB", "--local",
+      "--persist-to", persistence]);
+    execute(`INSERT INTO containers
+      (container_id,parent_id,name,status,lifecycle_state,version,created_at,updated_at,archived_at)
+      VALUES
+      ('TASK-READ-ROOT',NULL,'Task Read Root','IN_PROGRESS','ACTIVE',1,
+       '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z',NULL),
+      ('TASK-READ-ARCHIVED-PARENT',NULL,'Task Read Archived Parent','IN_PROGRESS',
+       'ARCHIVED',1,'2026-01-01T00:00:00.000Z','2026-01-02T00:00:00.000Z',
+       '2026-01-02T00:00:00.000Z');`);
+    execute(`INSERT INTO tasks
+      (task_id,container_id,title,description,status,priority,assignee,due_date,
+       lifecycle_state,version,created_at,updated_at,completed_at,archived_at)
+      VALUES
+      ('TASK-READ-A','TASK-READ-ROOT','Alpha','Mapped description','OPEN','HIGH','Max',
+       '2026-10-05','ACTIVE',1,'2026-01-01T00:00:00.000Z',
+       '2026-01-01T00:00:00.000Z','2026-01-01T12:00:00.000Z',NULL),
+      ('TASK-READ-B','TASK-READ-ROOT','Alpha',NULL,'NON_STANDARD',NULL,NULL,NULL,
+       'ACTIVE',1,'2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z',NULL,NULL),
+      ('TASK-READ-ARCHIVED','TASK-READ-ROOT','Beta',NULL,'OPEN',NULL,NULL,NULL,
+       'ARCHIVED',1,'2026-01-01T00:00:00.000Z','2026-01-02T00:00:00.000Z',NULL,
+       '2026-01-02T00:00:00.000Z'),
+      ('LEGACY-TASK-READ','TASK-READ-ROOT','Gamma',NULL,'CUSTOM',NULL,NULL,NULL,
+       'ACTIVE',1,'2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z',NULL,NULL),
+      ('TASK-READ-UNDER-ARCHIVED','TASK-READ-ARCHIVED-PARENT','Delta',NULL,
+       'CUSTOM_ACTIVE',NULL,NULL,NULL,'ACTIVE',1,'2026-01-01T00:00:00.000Z',
+       '2026-01-01T00:00:00.000Z',NULL,NULL);`);
+    assertQuery("SELECT COUNT(*) AS value FROM containers;", /value[^0-9]*2/i);
+    assertQuery("SELECT COUNT(*) AS value FROM tasks;", /value[^0-9]*5/i);
+    assertQuery("SELECT SUM(version) AS value FROM tasks;", /value[^0-9]*5/i);
+    assertQuery("SELECT COUNT(*) AS value FROM mcp_idempotency;", /value[^0-9]*0/i);
+    assertQuery("SELECT COUNT(*) AS value FROM mcp_capability_test;", /value[^0-9]*0/i);
+
+    workerProcess = spawn(wrangler, ["dev", "--local", "--persist-to", persistence,
+      "--port", String(port), "--ip", "127.0.0.1", "--var",
+      `DESK_V2_MCP_BEARER_TOKEN:${token}`], {
+      cwd: root,
+      env: sanitizedEnvironment(),
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    workerProcess.stdout.resume();
+    workerProcess.stderr.pipe(process.stderr);
+    const health = await waitForResponse(`http://127.0.0.1:${port}/health`);
+    assert.equal(health.status, 200);
+    const ready = await fetch(`http://127.0.0.1:${port}/ready`);
+    assert.equal(ready.status, 200);
+
+    client = new Client({ name: "desk-v2-task-read-foundation", version: "1.0.0" });
+    const transport = new StreamableHTTPClientTransport(
+      new URL(`http://127.0.0.1:${port}/mcp`),
+      { authProvider: { token: async () => token } }
+    );
+    await client.connect(transport);
+
+    const listed = await client.listTools();
+    assert.equal(listed.tools.length, 9);
+    const taskTool = listed.tools.find(tool => tool.name === "desk_v2_get_tasks");
+    assert.ok(taskTool);
+    assert.deepEqual(taskTool.annotations, {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    });
+
+    const defaultActive = await client.callTool({
+      name: "desk_v2_get_tasks", arguments: { containerId: "TASK-READ-ROOT" }
+    });
+    assert.deepEqual(defaultActive.structuredContent, {
+      scope: "CONTAINER", containerId: "TASK-READ-ROOT", lifecycle: "ACTIVE", count: 3,
+      tasks: defaultActive.structuredContent.tasks
+    });
+    assert.deepEqual(defaultActive.structuredContent.tasks.map(row => row.taskId),
+      ["TASK-READ-A", "TASK-READ-B", "LEGACY-TASK-READ"]);
+    assert.deepEqual(defaultActive.structuredContent.tasks[0], {
+      taskId: "TASK-READ-A", containerId: "TASK-READ-ROOT", title: "Alpha",
+      description: "Mapped description", status: "OPEN", priority: "HIGH", assignee: "Max",
+      dueDate: "2026-10-05", lifecycleState: "ACTIVE", version: 1,
+      createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z",
+      completedAt: "2026-01-01T12:00:00.000Z", archivedAt: null
+    });
+    assert.deepEqual(Object.keys(defaultActive.structuredContent.tasks[0]).sort(), [
+      "archivedAt", "assignee", "completedAt", "containerId", "createdAt", "description",
+      "dueDate", "lifecycleState", "priority", "status", "taskId", "title", "updatedAt",
+      "version"
+    ]);
+    assert.equal(defaultActive.structuredContent.tasks[1].status, "NON_STANDARD");
+    assert.equal(defaultActive.structuredContent.tasks[1].description, null);
+    assert.equal(defaultActive.structuredContent.tasks[1].priority, null);
+    assert.equal(defaultActive.structuredContent.tasks[1].assignee, null);
+    assert.equal(defaultActive.structuredContent.tasks[1].dueDate, null);
+    assert.equal(defaultActive.structuredContent.tasks[1].completedAt, null);
+
+    const explicitActive = await client.callTool({
+      name: "desk_v2_get_tasks",
+      arguments: { containerId: "TASK-READ-ROOT", lifecycle: "ACTIVE" }
+    });
+    assert.deepEqual(explicitActive.structuredContent.tasks, defaultActive.structuredContent.tasks);
+    const archived = await client.callTool({
+      name: "desk_v2_get_tasks",
+      arguments: { containerId: "TASK-READ-ROOT", lifecycle: "ARCHIVED" }
+    });
+    assert.deepEqual(archived.structuredContent.tasks.map(row => row.taskId),
+      ["TASK-READ-ARCHIVED"]);
+    const all = await client.callTool({
+      name: "desk_v2_get_tasks",
+      arguments: { containerId: "TASK-READ-ROOT", lifecycle: "ALL" }
+    });
+    assert.deepEqual(all.structuredContent.tasks.map(row => row.taskId),
+      ["TASK-READ-A", "TASK-READ-B", "TASK-READ-ARCHIVED", "LEGACY-TASK-READ"]);
+
+    const underArchived = await client.callTool({
+      name: "desk_v2_get_tasks", arguments: { containerId: "TASK-READ-ARCHIVED-PARENT" }
+    });
+    assert.deepEqual(underArchived.structuredContent.tasks.map(row => row.taskId),
+      ["TASK-READ-UNDER-ARCHIVED"]);
+
+    for (const taskId of ["TASK-READ-A", "TASK-READ-ARCHIVED", "LEGACY-TASK-READ",
+      "TASK-READ-UNDER-ARCHIVED"]) {
+      const byId = await client.callTool({ name: "desk_v2_get_tasks", arguments: { taskId } });
+      assert.equal(byId.structuredContent.scope, "BY_ID");
+      assert.equal(byId.structuredContent.containerId, null);
+      assert.equal(byId.structuredContent.lifecycle, null);
+      assert.equal(byId.structuredContent.count, 1);
+      assert.equal(byId.structuredContent.tasks.length, 1);
+      assert.equal(byId.structuredContent.tasks[0].taskId, taskId);
+    }
+
+    const missingContainer = await client.callTool({
+      name: "desk_v2_get_tasks", arguments: { containerId: "MISSING-CONTAINER" }
+    });
+    assert.equal(missingContainer.structuredContent.error.code, "CONTAINER_NOT_FOUND");
+    const missingTask = await client.callTool({
+      name: "desk_v2_get_tasks", arguments: { taskId: "MISSING-TASK" }
+    });
+    assert.equal(missingTask.structuredContent.error.code, "TASK_NOT_FOUND");
+    const invalidLifecycle = await client.callTool({
+      name: "desk_v2_get_tasks",
+      arguments: { containerId: "TASK-READ-ROOT", lifecycle: "INVALID" }
+    });
+    assert.equal(invalidLifecycle.isError, true);
+    const mixedScope = await client.callTool({
+      name: "desk_v2_get_tasks",
+      arguments: { taskId: "TASK-READ-A", containerId: "TASK-READ-ROOT" }
+    });
+    assert.equal(mixedScope.isError, true);
+
+    await client.close();
+    client = undefined;
+    workerProcess.kill("SIGTERM");
+    await new Promise(resolve => workerProcess.once("exit", resolve));
+    workerProcess = undefined;
+
+    assertQuery("SELECT COUNT(*) AS value FROM containers;", /value[^0-9]*2/i);
+    assertQuery("SELECT COUNT(*) AS value FROM tasks;", /value[^0-9]*5/i);
+    assertQuery("SELECT SUM(version) AS value FROM tasks;", /value[^0-9]*5/i);
+    assertQuery(`SELECT COUNT(*) AS value FROM tasks
+      WHERE updated_at IN ('2026-01-01T00:00:00.000Z','2026-01-02T00:00:00.000Z');`,
+    /value[^0-9]*5/i);
+    assertQuery("SELECT COUNT(*) AS value FROM mcp_idempotency;", /value[^0-9]*0/i);
+    assertQuery("SELECT COUNT(*) AS value FROM mcp_capability_test;", /value[^0-9]*0/i);
+  } finally {
+    if (client) await client.close().catch(() => {});
+    if (workerProcess && !workerProcess.killed) workerProcess.kill("SIGTERM");
+    fs.rmSync(persistence, { recursive: true, force: true });
   }
 });
 

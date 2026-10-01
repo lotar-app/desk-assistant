@@ -32,6 +32,7 @@ test("client MCP ufficiale esegue handshake, discovery, read e write isolata", a
       "desk_v2_capability_write",
       "desk_v2_create_container",
       "desk_v2_get_containers",
+      "desk_v2_get_tasks",
       "desk_v2_move_container",
       "desk_v2_restore_container",
       "desk_v2_update_container"
@@ -42,6 +43,7 @@ test("client MCP ufficiale esegue handshake, discovery, read e write isolata", a
     const createTool = listed.tools.find(tool => tool.name === "desk_v2_create_container");
     const moveTool = listed.tools.find(tool => tool.name === "desk_v2_move_container");
     const updateTool = listed.tools.find(tool => tool.name === "desk_v2_update_container");
+    const tasksTool = listed.tools.find(tool => tool.name === "desk_v2_get_tasks");
     const archiveTool = listed.tools.find(tool => tool.name === "desk_v2_archive_container");
     const restoreTool = listed.tools.find(tool => tool.name === "desk_v2_restore_container");
     assert.equal(readTool.annotations.readOnlyHint, true);
@@ -79,6 +81,12 @@ test("client MCP ufficiale esegue handshake, discovery, read e write isolata", a
     });
     assert.deepEqual(restoreTool.annotations, {
       readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    });
+    assert.deepEqual(tasksTool.annotations, {
+      readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
       openWorldHint: false
@@ -238,6 +246,106 @@ test("container read rifiuta combinazioni e proprietà non valide", async () => 
     }
     assert.equal(database.audit().containerQueries, 0);
     assert.equal(database.audit().writes, 0);
+  });
+});
+
+test("task read lista lifecycle, mapping, null e ordering senza side effect", async () => {
+  const database = fakeDb([
+    container({ id: "LEGACY-CONTAINER", name: "Active Container" }),
+    container({ id: "ARCHIVED-CONTAINER", name: "Archived Container", lifecycle: "ARCHIVED" })
+  ], { tasks: [
+    task({ id: "TASK-B", containerId: "LEGACY-CONTAINER", title: "Beta" }),
+    task({ id: "TASK-A2", containerId: "LEGACY-CONTAINER", title: "Alpha",
+      description: "Description", status: "DONE-LIKE", priority: "HIGH", assignee: "Max",
+      dueDate: "2026-10-02", completedAt: null }),
+    task({ id: "TASK-A1", containerId: "LEGACY-CONTAINER", title: "Alpha",
+      lifecycle: "ARCHIVED", status: "OPEN", completedAt: "2026-09-30T08:00:00.000Z" }),
+    task({ id: "LEGACY-TASK", containerId: "ARCHIVED-CONTAINER", title: "Visible Active" })
+  ] });
+  await withClient(database, async client => {
+    const before = database.snapshot();
+    const active = await callTasks(client, { containerId: " LEGACY-CONTAINER " });
+    assert.deepEqual({ scope: active.scope, containerId: active.containerId,
+      lifecycle: active.lifecycle, count: active.count }, {
+      scope: "CONTAINER", containerId: "LEGACY-CONTAINER", lifecycle: "ACTIVE", count: 2
+    });
+    assert.deepEqual(active.tasks.map(row => row.taskId), ["TASK-A2", "TASK-B"]);
+    assert.deepEqual(active.tasks[0], {
+      taskId: "TASK-A2", containerId: "LEGACY-CONTAINER", title: "Alpha",
+      description: "Description", status: "DONE-LIKE", priority: "HIGH", assignee: "Max",
+      dueDate: "2026-10-02", lifecycleState: "ACTIVE", version: 1,
+      createdAt: "2026-09-30T08:00:00.000Z", updatedAt: "2026-09-30T08:00:00.000Z",
+      completedAt: null, archivedAt: null
+    });
+    const archived = await callTasks(client, {
+      containerId: "LEGACY-CONTAINER", lifecycle: "ARCHIVED"
+    });
+    assert.deepEqual(archived.tasks.map(row => row.taskId), ["TASK-A1"]);
+    assert.equal(archived.tasks[0].status, "OPEN");
+    assert.equal(archived.tasks[0].completedAt, "2026-09-30T08:00:00.000Z");
+    const all = await callTasks(client, { containerId: "LEGACY-CONTAINER", lifecycle: "ALL" });
+    assert.deepEqual(all.tasks.map(row => row.taskId), ["TASK-A1", "TASK-A2", "TASK-B"]);
+    const archivedContainer = await callTasks(client, { containerId: "ARCHIVED-CONTAINER" });
+    assert.deepEqual(archivedContainer.tasks.map(row => row.taskId), ["LEGACY-TASK"]);
+    assert.deepEqual(database.snapshot(), before);
+    assert.equal(database.audit().writes, 0);
+  });
+});
+
+test("task read BY_ID ignora lifecycle Task e Container e gestisce not found", async () => {
+  const database = fakeDb([
+    container({ id: "ACTIVE-C", name: "Active" }),
+    container({ id: "ARCHIVED-C", name: "Archived", lifecycle: "ARCHIVED" }),
+    container({ id: "EMPTY-C", name: "Empty" })
+  ], { tasks: [
+    task({ id: "ACTIVE-T", containerId: "ACTIVE-C", title: "Active" }),
+    task({ id: "ARCHIVED-T", containerId: "ACTIVE-C", title: "Archived",
+      lifecycle: "ARCHIVED" }),
+    task({ id: "UNDER-ARCHIVED", containerId: "ARCHIVED-C", title: "Under Archived" })
+  ] });
+  await withClient(database, async client => {
+    for (const id of ["ACTIVE-T", "ARCHIVED-T", "UNDER-ARCHIVED"]) {
+      const value = await callTasks(client, { taskId: ` ${id} ` });
+      assert.deepEqual({ scope: value.scope, containerId: value.containerId,
+        lifecycle: value.lifecycle, count: value.count }, {
+        scope: "BY_ID", containerId: null, lifecycle: null, count: 1
+      });
+      assert.equal(value.tasks[0].taskId, id);
+    }
+    assert.deepEqual((await callTasks(client, { containerId: "EMPTY-C" })).tasks, []);
+    const missingTask = await client.callTool({ name: "desk_v2_get_tasks",
+      arguments: { taskId: "MISSING" } });
+    assert.equal(missingTask.structuredContent.error.code, "TASK_NOT_FOUND");
+    const missingContainer = await client.callTool({ name: "desk_v2_get_tasks",
+      arguments: { containerId: "MISSING" } });
+    assert.equal(missingContainer.structuredContent.error.code, "CONTAINER_NOT_FOUND");
+  });
+});
+
+test("task read applica schema strict e sanitizza errori D1", async () => {
+  const database = fakeDb([container({ id: "C", name: "Container" })]);
+  await withClient(database, async client => {
+    for (const arguments_ of [
+      {}, { taskId: "" }, { taskId: "   " }, { taskId: 1 },
+      { containerId: "" }, { containerId: "   " }, { containerId: 1 },
+      { containerId: "C", lifecycle: "DELETED" },
+      { taskId: "T", lifecycle: "ACTIVE" },
+      { taskId: "T", containerId: "C" },
+      { containerId: "C", extra: true }
+    ]) {
+      const result = await client.callTool({ name: "desk_v2_get_tasks", arguments: arguments_ });
+      assert.equal(result.isError, true);
+    }
+  });
+  const failing = fakeDb([container({ id: "C", name: "Container" })],
+    { failTaskReads: true });
+  await withClient(failing, async client => {
+    const result = await client.callTool({ name: "desk_v2_get_tasks",
+      arguments: { containerId: "C" } });
+    assert.deepEqual(result.structuredContent, { error: {
+      code: "D1_OPERATION_FAILED", message: "The Tasks could not be read.", retryable: true
+    } });
+    assert.doesNotMatch(result.content[0].text, /SELECT|binding|synthetic task failure/i);
   });
 });
 
@@ -1036,6 +1144,12 @@ async function callContainers(client, args) {
   return result.structuredContent;
 }
 
+async function callTasks(client, args) {
+  const result = await client.callTool({ name: "desk_v2_get_tasks", arguments: args });
+  assert.notEqual(result.isError, true, JSON.stringify(result.structuredContent));
+  return result.structuredContent;
+}
+
 async function callCreate(client, args) {
   const result = await client.callTool({ name: "desk_v2_create_container", arguments: args });
   assert.notEqual(result.isError, true, JSON.stringify(result.structuredContent));
@@ -1078,9 +1192,22 @@ function container({ id, parentId = null, name, lifecycle = "ACTIVE", focus = nu
   };
 }
 
+function task({ id, containerId, title, lifecycle = "ACTIVE", description = null,
+  status = "OPEN", priority = null, assignee = null, dueDate = null,
+  completedAt = null }) {
+  return {
+    task_id: id, container_id: containerId, title, description, status, priority, assignee,
+    due_date: dueDate, lifecycle_state: lifecycle, version: 1,
+    created_at: "2026-09-30T08:00:00.000Z",
+    updated_at: "2026-09-30T08:00:00.000Z", completed_at: completedAt,
+    archived_at: lifecycle === "ARCHIVED" ? "2026-09-30T09:00:00.000Z" : null
+  };
+}
+
 function fakeDb(containers = [], options = {}) {
   const state = {
-    containers: structuredClone(containers), tasks: 0, markers: [], idempotency: []
+    containers: structuredClone(containers), tasks: structuredClone(options.tasks || []),
+    markers: [], idempotency: []
   };
   const audit = { containerQueries: 0, taskQueries: 0, writes: 0 };
   let collideNextCreate = options.collideNextCreate === true;
@@ -1099,7 +1226,7 @@ function fakeDb(containers = [], options = {}) {
         _values() { return values; },
         async first() {
           if (/COUNT\(\*\).*containers/i.test(sql)) return { count: state.containers.length };
-          if (/COUNT\(\*\).*tasks/i.test(sql)) return { count: state.tasks };
+          if (/COUNT\(\*\).*tasks/i.test(sql)) return { count: state.tasks.length };
           if (/FROM mcp_capability_test WHERE id/i.test(sql)) {
             return state.markers.find(row => row.id === Number(values[0])) || null;
           }
@@ -1119,6 +1246,10 @@ function fakeDb(containers = [], options = {}) {
             const row = state.containers.find(item => item.container_id === values[0]);
             return row ? { lifecycle_state: row.lifecycle_state } : null;
           }
+          if (/FROM tasks[\s\S]+WHERE task_id = \?/i.test(sql)) {
+            if (options.failTaskReads) throw new Error("synthetic task failure with SELECT");
+            return structuredClone(state.tasks.find(row => row.task_id === values[0]) || null);
+          }
           if (/SELECT[\s\S]+FROM containers[\s\S]+WHERE container_id = \?/i.test(sql)) {
             return structuredClone(state.containers.find(row => row.container_id === values[0]) || null);
           }
@@ -1132,6 +1263,18 @@ function fakeDb(containers = [], options = {}) {
             }
             return { results: isDescendant(state.containers, values[0], values[1])
               ? [{ found: 1 }] : [] };
+          }
+          if (/\bFROM\s+tasks\b/i.test(sql)) {
+            if (options.failTaskReads) throw new Error("synthetic task failure with SELECT");
+            let rows = state.tasks.filter(row => row.container_id === values[0]);
+            if (/lifecycle_state\s*=\s*\?/i.test(sql)) {
+              rows = rows.filter(row => row.lifecycle_state === values[1]);
+            }
+            rows.sort((left, right) => left.title < right.title ? -1
+              : left.title > right.title ? 1
+                : left.task_id < right.task_id ? -1
+                  : left.task_id > right.task_id ? 1 : 0);
+            return { results: structuredClone(rows) };
           }
           if (!/^\s*SELECT\b/i.test(sql) || !/\bFROM\s+containers\b/i.test(sql)) {
             throw new Error(`unexpected container query: ${sql}`);
@@ -1268,7 +1411,7 @@ function fakeDb(containers = [], options = {}) {
     snapshot() {
       return {
         containers: state.containers.length,
-        tasks: state.tasks,
+        tasks: state.tasks.length,
         markers: structuredClone(state.markers),
         idempotency: state.idempotency.length
       };

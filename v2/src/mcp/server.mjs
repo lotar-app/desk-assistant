@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { CapabilityRepository } from "./capability-repository.mjs";
 import { ContainerDomainError, ContainerRepository } from "./container-repository.mjs";
+import { TaskDomainError, TaskRepository } from "./task-repository.mjs";
 
 const markerSchema = z.string()
   .min(1)
@@ -114,6 +115,35 @@ const lifecycleContainerInputSchema = z.object({
   containerId: moveContainerIdSchema,
   expectedVersion: expectedVersionSchema
 }).strict();
+const taskIdSchema = z.string({ error: "INVALID_TASK_ID" })
+  .transform(value => value.trim())
+  .pipe(z.string().min(1, "INVALID_TASK_ID"));
+const taskLifecycleSchema = z.enum(["ACTIVE", "ARCHIVED", "ALL"], {
+  error: "INVALID_LIFECYCLE"
+});
+const getTasksInputSchema = z.union([
+  z.object({ taskId: taskIdSchema }).strict(),
+  z.object({
+    containerId: moveContainerIdSchema,
+    lifecycle: taskLifecycleSchema.default("ACTIVE")
+  }).strict()
+]);
+const taskSchema = z.object({
+  taskId: z.string(),
+  containerId: z.string(),
+  title: z.string(),
+  description: z.string().nullable(),
+  status: z.string(),
+  priority: z.string().nullable(),
+  assignee: z.string().nullable(),
+  dueDate: z.string().nullable(),
+  lifecycleState: z.enum(["ACTIVE", "ARCHIVED"]),
+  version: z.number().int().positive(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  completedAt: z.string().nullable(),
+  archivedAt: z.string().nullable()
+}).strict();
 const toolErrorSchema = z.object({
   error: z.object({
     code: z.string(),
@@ -126,6 +156,7 @@ export function createDeskMcpServer(env) {
   const server = new McpServer({ name: "desk-v2-capability-test", version: "0.1.0" });
   const repository = new CapabilityRepository(env.DESK_V2_DB);
   const containerRepository = new ContainerRepository(env.DESK_V2_DB);
+  const taskRepository = new TaskRepository(env.DESK_V2_DB);
 
   server.registerTool(
     "desk_v2_create_container",
@@ -278,6 +309,38 @@ export function createDeskMcpServer(env) {
       }
     },
     async (input) => result(await containerRepository.getContainers(input))
+  );
+
+  server.registerTool(
+    "desk_v2_get_tasks",
+    {
+      title: "Get Desk V2 Tasks",
+      description: "Reads Tasks for one existing Container or one Task by stable ID. List lifecycle filters apply only to Tasks, including when the Container is archived. Never writes data.",
+      inputSchema: getTasksInputSchema,
+      outputSchema: z.union([z.object({
+        scope: z.enum(["CONTAINER", "BY_ID"]),
+        containerId: z.string().nullable(),
+        lifecycle: taskLifecycleSchema.nullable(),
+        count: z.number().int().nonnegative(),
+        tasks: z.array(taskSchema)
+      }).strict(), toolErrorSchema]),
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      }
+    },
+    async input => {
+      try {
+        return result(await taskRepository.getTasks(input));
+      } catch (error) {
+        if (error instanceof TaskDomainError) {
+          return errorResult(error.code, error.message, error.retryable);
+        }
+        return errorResult("D1_OPERATION_FAILED", "The Tasks could not be read.", true);
+      }
+    }
   );
 
   server.registerTool(
