@@ -123,7 +123,7 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
     });
     try {
       const tools = await client.listTools();
-      assert.equal(tools.tools.length, 10);
+      assert.equal(tools.tools.length, 11);
       assert.ok(tools.tools.some(tool => tool.name === "desk_v2_get_containers"));
       assert.ok(tools.tools.some(tool => tool.name === "desk_v2_create_container"));
       assert.ok(tools.tools.some(tool => tool.name === "desk_v2_move_container"));
@@ -889,7 +889,7 @@ test("task read foundation usa Worker e transport MCP isolati", async () => {
     });
 
     const listed = await client.listTools();
-    assert.equal(listed.tools.length, 10);
+    assert.equal(listed.tools.length, 11);
     const taskTool = listed.tools.find(tool => tool.name === "desk_v2_get_tasks");
     assert.ok(taskTool);
     assert.deepEqual(taskTool.annotations, {
@@ -1046,7 +1046,7 @@ test("task create foundation usa Worker e transport MCP isolati", async () => {
     });
 
     const listed = await client.listTools();
-    assert.equal(listed.tools.length, 10);
+    assert.equal(listed.tools.length, 11);
     const createTool = listed.tools.find(tool => tool.name === "desk_v2_create_task");
     assert.ok(createTool);
     assert.deepEqual(createTool.annotations, {
@@ -1186,6 +1186,170 @@ test("task create foundation usa Worker e transport MCP isolati", async () => {
       WHERE idempotency_key IN ('foundation-task-create-missing',
         'foundation-task-create-archived','foundation-task-create-rollback');`,
     /value[^0-9]*0/i);
+  } finally {
+    if (client) await client.close().catch(() => {});
+    await stopWorker(workerProcess);
+    fs.rmSync(persistence, { recursive: true, force: true });
+  }
+});
+
+test("task update foundation usa Worker e transport MCP isolati", async () => {
+  const persistence = fs.mkdtempSync(path.join(os.tmpdir(), "desk-v2-task-update-"));
+  const port = 9900 + (process.pid % 100);
+  const token = randomUUID();
+  let workerProcess;
+  let client;
+  const localCommand = args => command([...args, "--persist-to", persistence]);
+  const execute = sql => localCommand([
+    "d1", "execute", "DESK_V2_DB", "--local", "--command", compact(sql)
+  ]);
+  const assertQuery = (sql, pattern) => assert.match(execute(sql), pattern);
+
+  try {
+    command(["d1", "migrations", "apply", "DESK_V2_DB", "--local",
+      "--persist-to", persistence]);
+    execute(`INSERT INTO containers
+      (container_id,parent_id,name,status,lifecycle_state,version,created_at,updated_at,archived_at)
+      VALUES
+      ('TASK-UPDATE-ACTIVE',NULL,'Task Update Active','IN_PROGRESS','ACTIVE',1,
+       '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z',NULL),
+      ('TASK-UPDATE-ARCHIVED',NULL,'Task Update Archived','IN_PROGRESS','ARCHIVED',1,
+       '2026-01-01T00:00:00.000Z','2026-01-02T00:00:00.000Z',
+       '2026-01-02T00:00:00.000Z');`);
+    execute(`INSERT INTO tasks
+      (task_id,container_id,title,description,status,priority,assignee,due_date,
+       lifecycle_state,version,created_at,updated_at,completed_at,archived_at)
+      VALUES
+      ('TASK-UPDATE-REAL','TASK-UPDATE-ACTIVE','Original','Description','DONE','HIGH',
+       'Max','opaque-date','ACTIVE',1,'2026-01-01T00:00:00.000Z',
+       '2026-01-01T00:00:00.000Z','2026-01-03T00:00:00.000Z',NULL),
+      ('TASK-UPDATE-RACE','TASK-UPDATE-ACTIVE','Race',NULL,'OPEN',NULL,NULL,NULL,
+       'ACTIVE',1,'2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z',NULL,NULL),
+      ('TASK-UPDATE-SAME','TASK-UPDATE-ACTIVE','Same',NULL,'OPEN',NULL,NULL,NULL,
+       'ACTIVE',1,'2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z',NULL,NULL),
+      ('TASK-UPDATE-ROLLBACK','TASK-UPDATE-ACTIVE','Rollback',NULL,'OPEN',NULL,NULL,NULL,
+       'ACTIVE',1,'2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z',NULL,NULL),
+      ('TASK-UPDATE-ARCHIVED-TASK','TASK-UPDATE-ACTIVE','Archived Task',NULL,'OPEN',
+       NULL,NULL,NULL,'ARCHIVED',1,'2026-01-01T00:00:00.000Z',
+       '2026-01-02T00:00:00.000Z',NULL,'2026-01-02T00:00:00.000Z'),
+      ('TASK-UPDATE-ARCHIVED-PARENT','TASK-UPDATE-ARCHIVED','Archived Parent',NULL,'OPEN',
+       NULL,NULL,NULL,'ACTIVE',1,'2026-01-01T00:00:00.000Z',
+       '2026-01-01T00:00:00.000Z',NULL,NULL);`);
+
+    workerProcess = spawn(wrangler, ["dev", "--local", "--persist-to", persistence,
+      "--port", String(port), "--ip", "127.0.0.1", "--var",
+      `DESK_V2_MCP_BEARER_TOKEN:${token}`], {
+      cwd: root, env: sanitizedEnvironment(), stdio: ["ignore", "pipe", "pipe"]
+    });
+    workerProcess.stdout.resume();
+    workerProcess.stderr.pipe(process.stderr);
+    assert.equal((await waitForResponse(`http://127.0.0.1:${port}/health`)).status, 200);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/ready`)).status, 200);
+    client = await connectDiagnosticClient({
+      name: "desk-v2-task-update-foundation",
+      testName: "task update foundation usa Worker e transport MCP isolati",
+      session: "Task Update isolated", port, token, worker: () => workerProcess
+    });
+
+    const listed = await client.listTools();
+    assert.equal(listed.tools.length, 11);
+    const updateTool = listed.tools.find(tool => tool.name === "desk_v2_update_task");
+    assert.deepEqual(updateTool.annotations, { readOnlyHint: false, destructiveHint: false,
+      idempotentHint: true, openWorldHint: false });
+    const input = { idempotencyKey: "foundation-task-update-real",
+      taskId: " TASK-UPDATE-REAL ", expectedVersion: 1,
+      patch: { title: " Updated ", description: " ", status: " CUSTOM ", priority: null,
+        assignee: " User ", dueDate: " later-ish " } };
+    const updated = await client.callTool({ name: "desk_v2_update_task", arguments: input });
+    assert.equal(updated.structuredContent.changed, true);
+    assert.equal(updated.structuredContent.replayed, false);
+    assert.deepEqual(updated.structuredContent.task, {
+      taskId: "TASK-UPDATE-REAL", containerId: "TASK-UPDATE-ACTIVE", title: "Updated",
+      description: null, status: "CUSTOM", priority: null, assignee: "User",
+      dueDate: "later-ish", lifecycleState: "ACTIVE", version: 2,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: updated.structuredContent.task.updatedAt,
+      completedAt: "2026-01-03T00:00:00.000Z", archivedAt: null
+    });
+    assert.notEqual(updated.structuredContent.task.updatedAt, "2026-01-01T00:00:00.000Z");
+    const read = await client.callTool({
+      name: "desk_v2_get_tasks", arguments: { taskId: "TASK-UPDATE-REAL" }
+    });
+    assert.deepEqual(read.structuredContent.tasks, [updated.structuredContent.task]);
+
+    const noOpInput = { idempotencyKey: "foundation-task-update-noop",
+      taskId: "TASK-UPDATE-REAL", expectedVersion: 2, patch: { title: " Updated " } };
+    const noOp = await client.callTool({ name: "desk_v2_update_task", arguments: noOpInput });
+    assert.equal(noOp.structuredContent.changed, false);
+    assert.equal(noOp.structuredContent.task.version, 2);
+    assert.equal(noOp.structuredContent.task.updatedAt, updated.structuredContent.task.updatedAt);
+    const replay = await client.callTool({ name: "desk_v2_update_task", arguments: {
+      ...noOpInput, patch: { title: "Updated" }
+    } });
+    assert.equal(replay.structuredContent.replayed, true);
+    assert.deepEqual(replay.structuredContent.task, noOp.structuredContent.task);
+    const conflict = await client.callTool({ name: "desk_v2_update_task", arguments: {
+      ...noOpInput, patch: { title: "Different" }
+    } });
+    assert.equal(conflict.structuredContent.error.code, "IDEMPOTENCY_KEY_CONFLICT");
+
+    for (const [key, taskId, code] of [
+      ["missing", "MISSING", "TASK_NOT_FOUND"],
+      ["archived-task", "TASK-UPDATE-ARCHIVED-TASK", "TASK_ARCHIVED"],
+      ["archived-parent", "TASK-UPDATE-ARCHIVED-PARENT", "CONTAINER_ARCHIVED"]
+    ]) {
+      const rejected = await client.callTool({ name: "desk_v2_update_task", arguments: {
+        idempotencyKey: `foundation-task-update-${key}`, taskId,
+        expectedVersion: 1, patch: { title: "Rejected" }
+      } });
+      assert.equal(rejected.structuredContent.error.code, code);
+    }
+
+    const race = await Promise.all([
+      client.callTool({ name: "desk_v2_update_task", arguments: {
+        idempotencyKey: "foundation-task-update-race-a", taskId: "TASK-UPDATE-RACE",
+        expectedVersion: 1, patch: { title: "A" }
+      } }),
+      client.callTool({ name: "desk_v2_update_task", arguments: {
+        idempotencyKey: "foundation-task-update-race-b", taskId: "TASK-UPDATE-RACE",
+        expectedVersion: 1, patch: { title: "B" }
+      } })
+    ]);
+    assert.equal(race.filter(result => result.isError !== true).length, 1);
+    assert.equal(race.find(result => result.isError === true).structuredContent.error.code,
+      "TASK_VERSION_CONFLICT");
+    const sameInput = { idempotencyKey: "foundation-task-update-same",
+      taskId: "TASK-UPDATE-SAME", expectedVersion: 1, patch: { title: "Same Updated" } };
+    const same = await Promise.all([
+      client.callTool({ name: "desk_v2_update_task", arguments: sameInput }),
+      client.callTool({ name: "desk_v2_update_task", arguments: sameInput })
+    ]);
+    assert.deepEqual(same.map(result => result.structuredContent.replayed).sort(), [false, true]);
+
+    execute(`CREATE TRIGGER task_update_test_forced_failure BEFORE UPDATE OF title ON tasks
+      WHEN NEW.task_id='TASK-UPDATE-ROLLBACK'
+      BEGIN SELECT RAISE(ABORT, 'TASK_UPDATE_TEST_FAILURE'); END;`);
+    const failed = await client.callTool({ name: "desk_v2_update_task", arguments: {
+      idempotencyKey: "foundation-task-update-rollback", taskId: "TASK-UPDATE-ROLLBACK",
+      expectedVersion: 1, patch: { title: "Rejected" }
+    } });
+    assert.equal(failed.structuredContent.error.code, "D1_OPERATION_FAILED");
+    execute("DROP TRIGGER task_update_test_forced_failure;");
+
+    await client.close();
+    client = undefined;
+    await stopWorker(workerProcess);
+    workerProcess = undefined;
+    assertQuery("SELECT version AS value FROM tasks WHERE task_id='TASK-UPDATE-RACE';",
+      /value[^0-9]*2/i);
+    assertQuery("SELECT version AS value FROM tasks WHERE task_id='TASK-UPDATE-SAME';",
+      /value[^0-9]*2/i);
+    assertQuery(`SELECT COUNT(*) AS value FROM tasks WHERE task_id='TASK-UPDATE-ROLLBACK'
+      AND title='Rollback' AND version=1;`, /value[^0-9]*1/i);
+    assertQuery(`SELECT COUNT(*) AS value FROM mcp_idempotency
+      WHERE idempotency_key='foundation-task-update-rollback';`, /value[^0-9]*0/i);
+    assertQuery(`SELECT COUNT(*) AS value FROM mcp_idempotency
+      WHERE operation='desk_v2_update_task';`, /value[^0-9]*4/i);
   } finally {
     if (client) await client.close().catch(() => {});
     await stopWorker(workerProcess);

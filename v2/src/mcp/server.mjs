@@ -167,6 +167,26 @@ const createTaskOutputSchema = z.object({
   replayed: z.boolean(),
   task: taskSchema
 }).strict();
+const updateTaskPatchSchema = z.object({
+  title: requiredTaskTextSchema("INVALID_TASK_TITLE").optional(),
+  description: updateNullableTextSchema("INVALID_TASK_DESCRIPTION").optional(),
+  status: requiredTaskTextSchema("INVALID_TASK_STATUS").optional(),
+  priority: updateNullableTextSchema("INVALID_TASK_PRIORITY").optional(),
+  assignee: updateNullableTextSchema("INVALID_TASK_ASSIGNEE").optional(),
+  dueDate: updateNullableTextSchema("INVALID_TASK_DUE_DATE").optional()
+}, { error: "INVALID_PATCH" }).strict("INVALID_PATCH")
+  .refine(patch => Object.keys(patch).length > 0, "INVALID_PATCH");
+const updateTaskInputSchema = z.object({
+  idempotencyKey: idempotencyKeySchema,
+  taskId: taskIdSchema,
+  expectedVersion: expectedVersionSchema,
+  patch: updateTaskPatchSchema
+}).strict();
+const updateTaskOutputSchema = z.object({
+  replayed: z.boolean(),
+  changed: z.boolean(),
+  task: taskSchema
+}).strict();
 const toolErrorSchema = z.object({
   error: z.object({
     code: z.string(),
@@ -388,6 +408,32 @@ export function createDeskMcpServer(env) {
           return errorResult(error.code, error.message, error.retryable);
         }
         return errorResult("D1_OPERATION_FAILED", "The Tasks could not be read.", true);
+      }
+    }
+  );
+
+  server.registerTool(
+    "desk_v2_update_task",
+    {
+      title: "Update Desk V2 Task",
+      description: "Updates only the editable fields of one active Task in an active Container while preserving identity, placement, lifecycle, completion, and archive state. Requires optimistic concurrency and an idempotency key.",
+      inputSchema: updateTaskInputSchema,
+      outputSchema: z.union([updateTaskOutputSchema, toolErrorSchema]),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      }
+    },
+    async input => {
+      try {
+        return result(await taskRepository.updateTask(input));
+      } catch (error) {
+        if (error instanceof TaskDomainError) {
+          return errorResult(error.code, error.message, error.retryable);
+        }
+        return errorResult("D1_OPERATION_FAILED", "The Task could not be updated.", true);
       }
     }
   );
