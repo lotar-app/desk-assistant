@@ -144,6 +144,29 @@ const taskSchema = z.object({
   completedAt: z.string().nullable(),
   archivedAt: z.string().nullable()
 }).strict();
+const requiredTaskTextSchema = code => z.string({ error: code })
+  .transform(value => value.trim())
+  .pipe(z.string().min(1, code));
+const optionalTaskTextSchema = code => z.string({ error: code }).nullable().optional()
+  .transform(value => {
+    if (value === undefined || value === null) return null;
+    const normalized = value.trim();
+    return normalized || null;
+  });
+const createTaskInputSchema = z.object({
+  idempotencyKey: idempotencyKeySchema,
+  containerId: moveContainerIdSchema,
+  title: requiredTaskTextSchema("INVALID_TASK_TITLE"),
+  status: requiredTaskTextSchema("INVALID_TASK_STATUS"),
+  description: optionalTaskTextSchema("INVALID_TASK_DESCRIPTION"),
+  priority: optionalTaskTextSchema("INVALID_TASK_PRIORITY"),
+  assignee: optionalTaskTextSchema("INVALID_TASK_ASSIGNEE"),
+  dueDate: optionalTaskTextSchema("INVALID_TASK_DUE_DATE")
+}).strict();
+const createTaskOutputSchema = z.object({
+  replayed: z.boolean(),
+  task: taskSchema
+}).strict();
 const toolErrorSchema = z.object({
   error: z.object({
     code: z.string(),
@@ -309,6 +332,32 @@ export function createDeskMcpServer(env) {
       }
     },
     async (input) => result(await containerRepository.getContainers(input))
+  );
+
+  server.registerTool(
+    "desk_v2_create_task",
+    {
+      title: "Create Desk V2 Task",
+      description: "Creates one active Task in an active Desk V2 Container with a server-generated stable ID and required idempotency key.",
+      inputSchema: createTaskInputSchema,
+      outputSchema: z.union([createTaskOutputSchema, toolErrorSchema]),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      }
+    },
+    async input => {
+      try {
+        return result(await taskRepository.createTask(input));
+      } catch (error) {
+        if (error instanceof TaskDomainError) {
+          return errorResult(error.code, error.message, error.retryable);
+        }
+        return errorResult("D1_OPERATION_FAILED", "The Task could not be created.", true);
+      }
+    }
   );
 
   server.registerTool(

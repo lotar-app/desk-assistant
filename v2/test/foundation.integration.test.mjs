@@ -115,15 +115,15 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
     assert.equal((await fetch(`http://127.0.0.1:${port}/missing`)).status, 404);
     assert.equal((await fetch(`http://127.0.0.1:${port}/health`, { method: "POST" })).status, 405);
 
-    client = new Client({ name: "desk-v2-integration-test", version: "1.0.0" });
-    let transport = new StreamableHTTPClientTransport(
-      new URL(`http://127.0.0.1:${port}/mcp`),
-      { authProvider: { token: async () => token } }
-    );
-    await client.connect(transport);
+    client = await connectDiagnosticClient({
+      name: "desk-v2-integration-test",
+      testName: "foundation D1 locale e Worker locale rispettano tutti gli invarianti",
+      session: "A", port, token,
+      worker: () => workerProcess
+    });
     try {
       const tools = await client.listTools();
-      assert.equal(tools.tools.length, 9);
+      assert.equal(tools.tools.length, 10);
       assert.ok(tools.tools.some(tool => tool.name === "desk_v2_get_containers"));
       assert.ok(tools.tools.some(tool => tool.name === "desk_v2_create_container"));
       assert.ok(tools.tools.some(tool => tool.name === "desk_v2_move_container"));
@@ -414,8 +414,7 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
 
       await client.close();
       client = undefined;
-      workerProcess.kill("SIGTERM");
-      await new Promise(resolve => workerProcess.once("exit", resolve));
+      await stopWorker(workerProcess);
       workerProcess = undefined;
 
       workerProcess = spawn(wrangler, ["dev", "--local", "--persist-to", persistence,
@@ -432,12 +431,12 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
       const resumedReady = await fetch(`http://127.0.0.1:${port}/ready`);
       assert.equal(resumedReady.status, 200);
 
-      client = new Client({ name: "desk-v2-integration-test", version: "1.0.0" });
-      transport = new StreamableHTTPClientTransport(
-        new URL(`http://127.0.0.1:${port}/mcp`),
-        { authProvider: { token: async () => token } }
-      );
-      await client.connect(transport);
+      client = await connectDiagnosticClient({
+        name: "desk-v2-integration-test",
+        testName: "foundation D1 locale e Worker locale rispettano tutti gli invarianti",
+        session: "B", port, token,
+        worker: () => workerProcess
+      });
 
       execute(`INSERT INTO containers
         (container_id,parent_id,name,status,focus,owner,next_action,lifecycle_state,
@@ -627,8 +626,7 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
 
       await client.close();
       client = undefined;
-      workerProcess.kill("SIGTERM");
-      await new Promise(resolve => workerProcess.once("exit", resolve));
+      await stopWorker(workerProcess);
       workerProcess = undefined;
 
       workerProcess = spawn(wrangler, ["dev", "--local", "--persist-to", persistence,
@@ -645,12 +643,12 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
       const lifecycleReady = await fetch(`http://127.0.0.1:${port}/ready`);
       assert.equal(lifecycleReady.status, 200);
 
-      client = new Client({ name: "desk-v2-integration-test", version: "1.0.0" });
-      transport = new StreamableHTTPClientTransport(
-        new URL(`http://127.0.0.1:${port}/mcp`),
-        { authProvider: { token: async () => token } }
-      );
-      await client.connect(transport);
+      client = await connectDiagnosticClient({
+        name: "desk-v2-integration-test",
+        testName: "foundation D1 locale e Worker locale rispettano tutti gli invarianti",
+        session: "C", port, token,
+        worker: () => workerProcess
+      });
 
       execute(`INSERT INTO containers
         (container_id,parent_id,name,status,lifecycle_state,version,created_at,updated_at,
@@ -801,7 +799,7 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
       if (client) await client.close().catch(() => {});
     }
   } finally {
-    if (workerProcess && !workerProcess.killed) workerProcess.kill("SIGTERM");
+    await stopWorker(workerProcess);
     fs.rmSync(persistence, { recursive: true, force: true });
   }
 
@@ -883,15 +881,15 @@ test("task read foundation usa Worker e transport MCP isolati", async () => {
     const ready = await fetch(`http://127.0.0.1:${port}/ready`);
     assert.equal(ready.status, 200);
 
-    client = new Client({ name: "desk-v2-task-read-foundation", version: "1.0.0" });
-    const transport = new StreamableHTTPClientTransport(
-      new URL(`http://127.0.0.1:${port}/mcp`),
-      { authProvider: { token: async () => token } }
-    );
-    await client.connect(transport);
+    client = await connectDiagnosticClient({
+      name: "desk-v2-task-read-foundation",
+      testName: "task read foundation usa Worker e transport MCP isolati",
+      session: "Task READ isolated", port, token,
+      worker: () => workerProcess
+    });
 
     const listed = await client.listTools();
-    assert.equal(listed.tools.length, 9);
+    assert.equal(listed.tools.length, 10);
     const taskTool = listed.tools.find(tool => tool.name === "desk_v2_get_tasks");
     assert.ok(taskTool);
     assert.deepEqual(taskTool.annotations, {
@@ -985,8 +983,7 @@ test("task read foundation usa Worker e transport MCP isolati", async () => {
 
     await client.close();
     client = undefined;
-    workerProcess.kill("SIGTERM");
-    await new Promise(resolve => workerProcess.once("exit", resolve));
+    await stopWorker(workerProcess);
     workerProcess = undefined;
 
     assertQuery("SELECT COUNT(*) AS value FROM containers;", /value[^0-9]*2/i);
@@ -999,7 +996,199 @@ test("task read foundation usa Worker e transport MCP isolati", async () => {
     assertQuery("SELECT COUNT(*) AS value FROM mcp_capability_test;", /value[^0-9]*0/i);
   } finally {
     if (client) await client.close().catch(() => {});
-    if (workerProcess && !workerProcess.killed) workerProcess.kill("SIGTERM");
+    await stopWorker(workerProcess);
+    fs.rmSync(persistence, { recursive: true, force: true });
+  }
+});
+
+test("task create foundation usa Worker e transport MCP isolati", async () => {
+  const persistence = fs.mkdtempSync(path.join(os.tmpdir(), "desk-v2-task-create-"));
+  const port = 9700 + (process.pid % 200);
+  const token = randomUUID();
+  let workerProcess;
+  let client;
+
+  const localCommand = args => command([...args, "--persist-to", persistence]);
+  const execute = sql => localCommand([
+    "d1", "execute", "DESK_V2_DB", "--local", "--command", compact(sql)
+  ]);
+  const assertQuery = (sql, pattern) => assert.match(execute(sql), pattern);
+
+  try {
+    command(["d1", "migrations", "apply", "DESK_V2_DB", "--local",
+      "--persist-to", persistence]);
+    execute(`INSERT INTO containers
+      (container_id,parent_id,name,status,lifecycle_state,version,created_at,updated_at,archived_at)
+      VALUES
+      ('TASK-CREATE-ACTIVE',NULL,'Task Create Active','IN_PROGRESS','ACTIVE',1,
+       '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z',NULL),
+      ('TASK-CREATE-ARCHIVED',NULL,'Task Create Archived','IN_PROGRESS','ARCHIVED',1,
+       '2026-01-01T00:00:00.000Z','2026-01-02T00:00:00.000Z',
+       '2026-01-02T00:00:00.000Z');`);
+
+    workerProcess = spawn(wrangler, ["dev", "--local", "--persist-to", persistence,
+      "--port", String(port), "--ip", "127.0.0.1", "--var",
+      `DESK_V2_MCP_BEARER_TOKEN:${token}`], {
+      cwd: root,
+      env: sanitizedEnvironment(),
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    workerProcess.stdout.resume();
+    workerProcess.stderr.pipe(process.stderr);
+    assert.equal((await waitForResponse(`http://127.0.0.1:${port}/health`)).status, 200);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/ready`)).status, 200);
+
+    client = await connectDiagnosticClient({
+      name: "desk-v2-task-create-foundation",
+      testName: "task create foundation usa Worker e transport MCP isolati",
+      session: "Task Create isolated", port, token,
+      worker: () => workerProcess
+    });
+
+    const listed = await client.listTools();
+    assert.equal(listed.tools.length, 10);
+    const createTool = listed.tools.find(tool => tool.name === "desk_v2_create_task");
+    assert.ok(createTool);
+    assert.deepEqual(createTool.annotations, {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    });
+
+    const minimalInput = {
+      idempotencyKey: "foundation-task-create-minimal",
+      containerId: " TASK-CREATE-ACTIVE ",
+      title: " Foundation Task ",
+      status: " CUSTOM_STATUS "
+    };
+    const created = await client.callTool({
+      name: "desk_v2_create_task", arguments: minimalInput
+    });
+    assert.notEqual(created.isError, true);
+    assert.equal(created.structuredContent.replayed, false);
+    const createdTask = created.structuredContent.task;
+    assert.match(createdTask.taskId,
+      /^TSK-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    assert.deepEqual(createdTask, {
+      taskId: createdTask.taskId,
+      containerId: "TASK-CREATE-ACTIVE",
+      title: "Foundation Task",
+      description: null,
+      status: "CUSTOM_STATUS",
+      priority: null,
+      assignee: null,
+      dueDate: null,
+      lifecycleState: "ACTIVE",
+      version: 1,
+      createdAt: createdTask.createdAt,
+      updatedAt: createdTask.createdAt,
+      completedAt: null,
+      archivedAt: null
+    });
+    assert.deepEqual(Object.keys(createdTask).sort(), [
+      "archivedAt", "assignee", "completedAt", "containerId", "createdAt", "description",
+      "dueDate", "lifecycleState", "priority", "status", "taskId", "title", "updatedAt",
+      "version"
+    ]);
+
+    const byId = await client.callTool({
+      name: "desk_v2_get_tasks", arguments: { taskId: createdTask.taskId }
+    });
+    assert.deepEqual(byId.structuredContent.tasks, [createdTask]);
+
+    const replay = await client.callTool({
+      name: "desk_v2_create_task", arguments: {
+        ...minimalInput,
+        containerId: "TASK-CREATE-ACTIVE",
+        title: "Foundation Task",
+        status: "CUSTOM_STATUS",
+        description: null,
+        priority: null,
+        assignee: null,
+        dueDate: null
+      }
+    });
+    assert.equal(replay.structuredContent.replayed, true);
+    assert.deepEqual(replay.structuredContent.task, createdTask);
+    const conflict = await client.callTool({
+      name: "desk_v2_create_task", arguments: {
+        ...minimalInput, containerId: "TASK-CREATE-ACTIVE", title: "Different"
+      }
+    });
+    assert.equal(conflict.structuredContent.error.code, "IDEMPOTENCY_KEY_CONFLICT");
+
+    const optional = await client.callTool({
+      name: "desk_v2_create_task", arguments: {
+        idempotencyKey: "foundation-task-create-optional",
+        containerId: "TASK-CREATE-ACTIVE",
+        title: " Optional Task ",
+        status: " READY ",
+        description: " Description ",
+        priority: " High ",
+        assignee: " Max ",
+        dueDate: " someday-ish "
+      }
+    });
+    assert.deepEqual({
+      description: optional.structuredContent.task.description,
+      priority: optional.structuredContent.task.priority,
+      assignee: optional.structuredContent.task.assignee,
+      dueDate: optional.structuredContent.task.dueDate
+    }, { description: "Description", priority: "High", assignee: "Max",
+      dueDate: "someday-ish" });
+
+    const missing = await client.callTool({
+      name: "desk_v2_create_task", arguments: {
+        idempotencyKey: "foundation-task-create-missing",
+        containerId: "MISSING", title: "Missing", status: "OPEN"
+      }
+    });
+    assert.equal(missing.structuredContent.error.code, "CONTAINER_NOT_FOUND");
+    const archived = await client.callTool({
+      name: "desk_v2_create_task", arguments: {
+        idempotencyKey: "foundation-task-create-archived",
+        containerId: "TASK-CREATE-ARCHIVED", title: "Archived", status: "OPEN"
+      }
+    });
+    assert.equal(archived.structuredContent.error.code, "CONTAINER_ARCHIVED");
+
+    execute(`CREATE TRIGGER task_create_test_forced_failure
+      BEFORE INSERT ON tasks
+      WHEN NEW.title='Forced Failure'
+      BEGIN SELECT RAISE(ABORT, 'TASK_CREATE_TEST_FAILURE'); END;`);
+    const failed = await client.callTool({
+      name: "desk_v2_create_task", arguments: {
+        idempotencyKey: "foundation-task-create-rollback",
+        containerId: "TASK-CREATE-ACTIVE", title: "Forced Failure", status: "OPEN"
+      }
+    });
+    assert.equal(failed.structuredContent.error.code, "D1_OPERATION_FAILED");
+    execute("DROP TRIGGER task_create_test_forced_failure;");
+
+    await client.close();
+    client = undefined;
+    await stopWorker(workerProcess);
+    workerProcess = undefined;
+
+    assertQuery("SELECT COUNT(*) AS value FROM tasks;", /value[^0-9]*2/i);
+    assertQuery(`SELECT COUNT(*) AS value FROM tasks
+      WHERE task_id IN ('${createdTask.taskId}','${optional.structuredContent.task.taskId}')
+        AND lifecycle_state='ACTIVE' AND version=1 AND completed_at IS NULL
+        AND archived_at IS NULL;`, /value[^0-9]*2/i);
+    assertQuery(`SELECT COUNT(*) AS value FROM mcp_idempotency
+      WHERE operation='desk_v2_create_task';`, /value[^0-9]*2/i);
+    assertQuery(`SELECT COUNT(*) AS value FROM mcp_idempotency AS item
+      LEFT JOIN tasks AS task ON task.task_id=item.resource_id
+      WHERE item.operation='desk_v2_create_task' AND task.task_id IS NULL;`,
+    /value[^0-9]*0/i);
+    assertQuery(`SELECT COUNT(*) AS value FROM mcp_idempotency
+      WHERE idempotency_key IN ('foundation-task-create-missing',
+        'foundation-task-create-archived','foundation-task-create-rollback');`,
+    /value[^0-9]*0/i);
+  } finally {
+    if (client) await client.close().catch(() => {});
+    await stopWorker(workerProcess);
     fs.rmSync(persistence, { recursive: true, force: true });
   }
 });
@@ -1053,6 +1242,79 @@ function sanitizedEnvironment() {
 
 function compact(sql) {
   return sql.replace(/\s+/g, " ").trim();
+}
+
+async function connectDiagnosticClient({ name, testName, session, port, token, worker }) {
+  const endpoint = `http://127.0.0.1:${port}/mcp`;
+  const client = new Client({ name, version: "1.0.0" });
+  const transport = new StreamableHTTPClientTransport(
+    new URL(endpoint), { authProvider: { token: async () => token } }
+  );
+  const listTools = client.listTools.bind(client);
+  const callTool = client.callTool.bind(client);
+  client.listTools = (...args) => diagnosticRequest({
+    request: () => listTools(...args), testName, session, operation: "tools/list", endpoint, worker
+  });
+  client.callTool = (...args) => diagnosticRequest({
+    request: () => callTool(...args), testName, session,
+    operation: `tools/call:${args[0]?.name || "unknown"}`, endpoint, worker
+  });
+  await diagnosticRequest({
+    request: () => client.connect(transport), testName, session, operation: "initialize",
+    endpoint, worker
+  });
+  return client;
+}
+
+async function diagnosticRequest({ request, testName, session, operation, endpoint, worker }) {
+  try {
+    return await request();
+  } catch (error) {
+    const process = worker();
+    const detail = [
+      `MCP request failed: test=${testName}`,
+      `session=${session}`,
+      `operation=${operation}`,
+      `endpoint=${endpoint}`,
+      `error=${formatError(error)}`,
+      `cause=${formatError(error?.cause)}`,
+      `workerExitCode=${process?.exitCode ?? "null"}`,
+      `workerSignalCode=${process?.signalCode ?? "null"}`
+    ].join("; ");
+    throw new Error(detail, { cause: error });
+  }
+}
+
+function formatError(error) {
+  if (!error) return "none";
+  const code = error.code ? ` code=${error.code}` : "";
+  return `${error.name || "Error"}: ${error.message || String(error)}${code}`;
+}
+
+async function stopWorker(workerProcess) {
+  if (!workerProcess) return;
+  if (workerProcess.exitCode === null && workerProcess.signalCode === null) {
+    await new Promise((resolve, reject) => {
+      const onExit = () => {
+        workerProcess.off("error", onError);
+        resolve();
+      };
+      const onError = error => {
+        workerProcess.off("exit", onExit);
+        reject(error);
+      };
+      workerProcess.once("exit", onExit);
+      workerProcess.once("error", onError);
+      const signaled = workerProcess.kill("SIGTERM");
+      if (!signaled && (workerProcess.exitCode !== null || workerProcess.signalCode !== null)) {
+        workerProcess.off("exit", onExit);
+        workerProcess.off("error", onError);
+        resolve();
+      }
+    });
+  }
+  workerProcess.stdout?.pause();
+  workerProcess.stderr?.unpipe(process.stderr);
 }
 
 async function waitForResponse(url) {

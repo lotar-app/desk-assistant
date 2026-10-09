@@ -31,6 +31,7 @@ test("client MCP ufficiale esegue handshake, discovery, read e write isolata", a
       "desk_v2_capability_read",
       "desk_v2_capability_write",
       "desk_v2_create_container",
+      "desk_v2_create_task",
       "desk_v2_get_containers",
       "desk_v2_get_tasks",
       "desk_v2_move_container",
@@ -43,6 +44,7 @@ test("client MCP ufficiale esegue handshake, discovery, read e write isolata", a
     const createTool = listed.tools.find(tool => tool.name === "desk_v2_create_container");
     const moveTool = listed.tools.find(tool => tool.name === "desk_v2_move_container");
     const updateTool = listed.tools.find(tool => tool.name === "desk_v2_update_container");
+    const createTaskTool = listed.tools.find(tool => tool.name === "desk_v2_create_task");
     const tasksTool = listed.tools.find(tool => tool.name === "desk_v2_get_tasks");
     const archiveTool = listed.tools.find(tool => tool.name === "desk_v2_archive_container");
     const restoreTool = listed.tools.find(tool => tool.name === "desk_v2_restore_container");
@@ -87,6 +89,12 @@ test("client MCP ufficiale esegue handshake, discovery, read e write isolata", a
     });
     assert.deepEqual(tasksTool.annotations, {
       readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    });
+    assert.deepEqual(createTaskTool.annotations, {
+      readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: true,
       openWorldHint: false
@@ -347,6 +355,139 @@ test("task read applica schema strict e sanitizza errori D1", async () => {
     } });
     assert.doesNotMatch(result.content[0].text, /SELECT|binding|synthetic task failure/i);
   });
+});
+
+test("task create normalizza input, genera ID e resta coerente con Task READ", async () => {
+  const database = fakeDb([container({ id: "TASK-CREATE-C", name: "Container" })]);
+  await withClient(database, async client => {
+    const minimal = await callCreateTask(client, {
+      idempotencyKey: "task-create-minimal", containerId: " TASK-CREATE-C ",
+      title: " Minimal Task ", status: " CUSTOM_STATUS "
+    });
+    assert.equal(minimal.replayed, false);
+    assert.match(minimal.task.taskId,
+      /^TSK-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    assert.deepEqual(minimal.task, {
+      taskId: minimal.task.taskId, containerId: "TASK-CREATE-C", title: "Minimal Task",
+      description: null, status: "CUSTOM_STATUS", priority: null, assignee: null,
+      dueDate: null, lifecycleState: "ACTIVE", version: 1,
+      createdAt: minimal.task.createdAt, updatedAt: minimal.task.createdAt,
+      completedAt: null, archivedAt: null
+    });
+    assert.deepEqual(Object.keys(minimal.task).sort(), [
+      "archivedAt", "assignee", "completedAt", "containerId", "createdAt", "description",
+      "dueDate", "lifecycleState", "priority", "status", "taskId", "title", "updatedAt",
+      "version"
+    ]);
+    const full = await callCreateTask(client, {
+      idempotencyKey: "task-create-full", containerId: "TASK-CREATE-C",
+      title: " Full Task ", status: " READY ", description: " Description ",
+      priority: " High ", assignee: " Max ", dueDate: " someday-ish "
+    });
+    assert.deepEqual({ description: full.task.description, priority: full.task.priority,
+      assignee: full.task.assignee, dueDate: full.task.dueDate },
+    { description: "Description", priority: "High", assignee: "Max", dueDate: "someday-ish" });
+    const empty = await callCreateTask(client, {
+      idempotencyKey: "task-create-empty", containerId: "TASK-CREATE-C",
+      title: "Empty Optional", status: "OPEN", description: " ", priority: "",
+      assignee: null, dueDate: "   "
+    });
+    assert.deepEqual({ description: empty.task.description, priority: empty.task.priority,
+      assignee: empty.task.assignee, dueDate: empty.task.dueDate },
+    { description: null, priority: null, assignee: null, dueDate: null });
+    const byId = await callTasks(client, { taskId: minimal.task.taskId });
+    assert.deepEqual(byId.tasks[0], minimal.task);
+    assert.equal(database.snapshot().tasks, 3);
+    assert.equal(database.snapshot().idempotency, 3);
+  });
+});
+
+test("task create valida input e lifecycle del Container senza side effect", async () => {
+  const database = fakeDb([
+    container({ id: "ACTIVE-C", name: "Active" }),
+    container({ id: "ARCHIVED-C", name: "Archived", lifecycle: "ARCHIVED" })
+  ]);
+  await withClient(database, async client => {
+    for (const arguments_ of [
+      { idempotencyKey: "k", containerId: "", title: "T", status: "S" },
+      { idempotencyKey: "k", containerId: "ACTIVE-C", title: "", status: "S" },
+      { idempotencyKey: "k", containerId: "ACTIVE-C", title: "T", status: " " },
+      { idempotencyKey: "k", containerId: "ACTIVE-C", title: "T", status: "S",
+        description: 1 },
+      { idempotencyKey: "k", containerId: "ACTIVE-C", title: "T", status: "S",
+        priority: false },
+      { idempotencyKey: "k", containerId: "ACTIVE-C", title: "T", status: "S",
+        assignee: 1 },
+      { idempotencyKey: "k", containerId: "ACTIVE-C", title: "T", status: "S",
+        dueDate: {} },
+      { idempotencyKey: "k", containerId: "ACTIVE-C", title: "T", status: "S",
+        taskId: "CALLER-ID" }
+    ]) {
+      const value = await client.callTool({ name: "desk_v2_create_task", arguments: arguments_ });
+      assert.equal(value.isError, true);
+    }
+    const missing = await client.callTool({ name: "desk_v2_create_task", arguments: {
+      idempotencyKey: "missing", containerId: "MISSING", title: "T", status: "S"
+    } });
+    assert.equal(missing.structuredContent.error.code, "CONTAINER_NOT_FOUND");
+    const archived = await client.callTool({ name: "desk_v2_create_task", arguments: {
+      idempotencyKey: "archived", containerId: "ARCHIVED-C", title: "T", status: "S"
+    } });
+    assert.equal(archived.structuredContent.error.code, "CONTAINER_ARCHIVED");
+    assert.deepEqual(database.snapshot(), {
+      containers: 2, tasks: 0, markers: [], idempotency: 0
+    });
+  });
+});
+
+test("task create applica replay, conflitto, snapshot storico e concorrenza", async () => {
+  const database = fakeDb([container({ id: "C", name: "Container" })]);
+  await withClient(database, async client => {
+    const input = { idempotencyKey: "task-replay", containerId: "C",
+      title: " Same ", status: " OPAQUE ", description: " " };
+    const created = await callCreateTask(client, input);
+    database.updateTask(created.task.taskId, { title: "Later Title", version: 2 });
+    const replay = await callCreateTask(client, { ...input, title: "Same", status: "OPAQUE",
+      description: null, priority: null, assignee: null, dueDate: null });
+    assert.equal(replay.replayed, true);
+    assert.equal(replay.task.taskId, created.task.taskId);
+    assert.deepEqual(replay.task, created.task);
+    const conflict = await client.callTool({ name: "desk_v2_create_task", arguments: {
+      ...input, title: "Different"
+    } });
+    assert.equal(conflict.structuredContent.error.code, "IDEMPOTENCY_KEY_CONFLICT");
+
+    const concurrentInput = { idempotencyKey: "task-concurrent", containerId: "C",
+      title: "Concurrent", status: "OPEN" };
+    const concurrent = await Promise.all([
+      callCreateTask(client, concurrentInput), callCreateTask(client, concurrentInput)
+    ]);
+    assert.deepEqual(concurrent.map(value => value.replayed).sort(), [false, true]);
+    assert.equal(concurrent[0].task.taskId, concurrent[1].task.taskId);
+    const firstDuplicate = await callCreateTask(client, { idempotencyKey: "duplicate-a",
+      containerId: "C", title: "Duplicate", status: "OPEN" });
+    const secondDuplicate = await callCreateTask(client, { idempotencyKey: "duplicate-b",
+      containerId: "C", title: "Duplicate", status: "OPEN" });
+    assert.notEqual(firstDuplicate.task.taskId, secondDuplicate.task.taskId);
+    assert.equal(database.snapshot().tasks, 4);
+    assert.equal(database.snapshot().idempotency, 4);
+  });
+});
+
+test("task create rollbacka failure D1 e collisione ID senza record orfani", async () => {
+  for (const options of [{ failNextTaskCreateBatch: true }, { collideNextTaskCreate: true }]) {
+    const database = fakeDb([container({ id: "C", name: "Container" })], options);
+    await withClient(database, async client => {
+      const failed = await client.callTool({ name: "desk_v2_create_task", arguments: {
+        idempotencyKey: "task-failure", containerId: "C", title: "Failure", status: "OPEN"
+      } });
+      assert.equal(failed.structuredContent.error.code, "D1_OPERATION_FAILED");
+      assert.equal(failed.structuredContent.error.retryable, true);
+      assert.deepEqual(database.snapshot(), {
+        containers: 1, tasks: 0, markers: [], idempotency: 0
+      });
+    });
+  }
 });
 
 test("container create normalizza input, crea root e child e resta coerente con READ", async () => {
@@ -1150,6 +1291,12 @@ async function callTasks(client, args) {
   return result.structuredContent;
 }
 
+async function callCreateTask(client, args) {
+  const result = await client.callTool({ name: "desk_v2_create_task", arguments: args });
+  assert.notEqual(result.isError, true, JSON.stringify(result.structuredContent));
+  return result.structuredContent;
+}
+
 async function callCreate(client, args) {
   const result = await client.callTool({ name: "desk_v2_create_container", arguments: args });
   assert.notEqual(result.isError, true, JSON.stringify(result.structuredContent));
@@ -1214,6 +1361,8 @@ function fakeDb(containers = [], options = {}) {
   let failNextMoveBatch = options.failNextMoveBatch === true;
   let failNextUpdateBatch = options.failNextUpdateBatch === true;
   let failNextLifecycleBatch = options.failNextLifecycleBatch === true;
+  let failNextTaskCreateBatch = options.failNextTaskCreateBatch === true;
+  let collideNextTaskCreate = options.collideNextTaskCreate === true;
   let collidedId = null;
   const database = {
     prepare(sql) {
@@ -1330,6 +1479,14 @@ function fakeDb(containers = [], options = {}) {
             clearFailure() { failNextMoveBatch = false; }
           } });
         }
+        if (operation === "desk_v2_create_task") {
+          return taskCreateBatch({ statements, state, audit, before, options: {
+            get failNextTaskCreateBatch() { return failNextTaskCreateBatch; },
+            clearFailure() { failNextTaskCreateBatch = false; },
+            get collideNextTaskCreate() { return collideNextTaskCreate; },
+            clearCollision() { collideNextTaskCreate = false; }
+          } });
+        }
         if (operation === "desk_v2_update_container") {
           return updateBatch({ statements, state, audit, before, options: {
             get failNextUpdateBatch() { return failNextUpdateBatch; },
@@ -1429,9 +1586,77 @@ function fakeDb(containers = [], options = {}) {
     getContainer(containerId) {
       return structuredClone(state.containers.find(row => row.container_id === containerId) || null);
     },
+    updateTask(taskId, changes) {
+      const row = state.tasks.find(item => item.task_id === taskId);
+      Object.assign(row, Object.fromEntries(Object.entries(changes).map(([key, value]) => [
+        key === "taskId" ? "task_id"
+          : key === "containerId" ? "container_id"
+            : key === "dueDate" ? "due_date"
+              : key === "lifecycleState" ? "lifecycle_state"
+                : key === "completedAt" ? "completed_at"
+                  : key === "archivedAt" ? "archived_at" : key,
+        value
+      ])));
+    },
     audit() { return { ...audit }; }
   };
   return database;
+}
+
+function taskCreateBatch({ statements, state, audit, before, options }) {
+  try {
+    const values = statements[0]._values();
+    const [operation, key, hash, attemptId, resourceType, resourceId,
+      responseJson, completedAt, containerId] = values;
+    const existing = state.idempotency.find(row => row.operation === operation
+      && row.idempotency_key === key);
+    const containerRow = state.containers.find(row => row.container_id === containerId);
+    if (!existing && containerRow?.lifecycle_state === "ACTIVE") {
+      state.idempotency.push({ operation, idempotency_key: key, request_hash: hash,
+        attempt_id: attemptId, resource_type: resourceType, resource_id: resourceId,
+        response_json: responseJson, completed_at: completedAt });
+    }
+    const acquired = state.idempotency.find(row => row.operation === operation
+      && row.idempotency_key === key && row.request_hash === hash
+      && row.attempt_id === attemptId);
+    if (acquired && options.failNextTaskCreateBatch) {
+      options.clearFailure();
+      throw new Error("synthetic task create failure");
+    }
+    if (acquired && (options.collideNextTaskCreate
+      || state.tasks.some(row => row.task_id === resourceId))) {
+      options.clearCollision();
+      throw new Error("synthetic task id collision");
+    }
+    if (acquired) {
+      const value = JSON.parse(responseJson).task;
+      state.tasks.push({
+        task_id: value.taskId, container_id: value.containerId, title: value.title,
+        description: value.description, status: value.status, priority: value.priority,
+        assignee: value.assignee, due_date: value.dueDate,
+        lifecycle_state: value.lifecycleState, version: value.version,
+        created_at: value.createdAt, updated_at: value.updatedAt,
+        completed_at: value.completedAt, archived_at: value.archivedAt
+      });
+      audit.writes += 2;
+    }
+    const record = state.idempotency.find(row => row.operation === operation
+      && row.idempotency_key === key);
+    let outcome = "UNEXPECTED_STATE";
+    if (record && record.request_hash !== hash) outcome = "IDEMPOTENCY_CONFLICT";
+    else if (record && record.attempt_id === attemptId) outcome = "CREATED";
+    else if (record && record.request_hash === hash) outcome = "REPLAY";
+    else if (!containerRow) outcome = "CONTAINER_NOT_FOUND";
+    else if (containerRow.lifecycle_state === "ARCHIVED") outcome = "CONTAINER_ARCHIVED";
+    return [{ success: true }, { success: true }, { success: true,
+      results: [{ outcome, response_json: record?.response_json ?? null }] }];
+  } catch (error) {
+    state.containers = before.containers;
+    state.tasks = before.tasks;
+    state.markers = before.markers;
+    state.idempotency = before.idempotency;
+    throw error;
+  }
 }
 
 function moveBatch({ statements, state, audit, before, options }) {
