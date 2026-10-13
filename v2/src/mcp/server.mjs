@@ -175,7 +175,8 @@ const updateTaskPatchSchema = z.object({
   assignee: updateNullableTextSchema("INVALID_TASK_ASSIGNEE").optional(),
   dueDate: updateNullableTextSchema("INVALID_TASK_DUE_DATE").optional()
 }, { error: "INVALID_PATCH" }).strict("INVALID_PATCH")
-  .refine(patch => Object.keys(patch).length > 0, "INVALID_PATCH");
+  .refine(patch => Object.keys(patch).length > 0, "INVALID_PATCH")
+  .meta({ minProperties: 1 });
 const updateTaskInputSchema = z.object({
   idempotencyKey: idempotencyKeySchema,
   taskId: taskIdSchema,

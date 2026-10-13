@@ -107,6 +107,7 @@ test("client MCP ufficiale esegue handshake, discovery, read e write isolata", a
       idempotentHint: true,
       openWorldHint: false
     });
+    assert.equal(updateTaskTool.inputSchema.properties.patch.minProperties, 1);
 
     const before = database.snapshot();
     const read = await client.callTool({ name: "desk_v2_capability_read", arguments: {} });
