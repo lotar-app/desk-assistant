@@ -100,6 +100,226 @@ schema OpenAPI devono essere verificati e pubblicati come componenti distinti.
 > 6. Se una nuova Action cade nel flusso `updateDesk`, verificare prima il deploy
 >    del Worker e poi quello della Web App.
 
+## Desk V2 — Cloudflare DEV
+
+Questa procedura è separata dal Worker legacy nella directory `worker/` e dalla
+pipeline Apps Script. Si applica esclusivamente al Worker MCP Desk V2 nella
+directory `v2/`.
+
+### Identità autorizzata
+
+Prima di qualsiasi deploy verificare in sola lettura:
+
+- account Cloudflare:
+  `9f6a80897801df9b42d59eae9730c6a1`;
+- Worker:
+  `desk-v2-foundation-dev`;
+- URL:
+  `https://desk-v2-foundation-dev.fastmax.workers.dev`;
+- database D1:
+  `desk-v2-foundation-dev`;
+- UUID D1:
+  `e2b252a0-ec15-48a8-bcd6-aed6d49427a3`;
+- binding D1:
+  `DESK_V2_DB`;
+- entry point:
+  `src/index.mjs`.
+
+Fermarsi senza deploy se uno qualsiasi di questi valori non coincide.
+
+### Prerequisiti Git
+
+1. Il commit esatto autorizzato per il deploy deve essere già presente su
+   `origin/main`.
+2. Verificare che lo SHA locale e quello di `origin/main` coincidano con il
+   commit autorizzato.
+3. Non distribuire direttamente da un working tree contenente modifiche non
+   correlate.
+4. Se il working tree originale non è pulito, creare un checkout temporaneo
+   isolato del commit esatto senza eseguire reset, stash o checkout nel
+   repository originale.
+
+Esempio:
+
+```bash
+DEPLOY_SHA="<sha-autorizzato>"
+TEMP_DIR="$(mktemp -d)"
+git worktree add --detach "$TEMP_DIR" "$DEPLOY_SHA"
+```
+
+Verificare nel checkout temporaneo:
+
+```bash
+git -C "$TEMP_DIR" rev-parse HEAD
+git -C "$TEMP_DIR" status --short
+```
+
+Lo SHA deve coincidere esattamente con `DEPLOY_SHA` e lo stato deve essere
+pulito.
+
+### Dipendenze e verifiche locali
+
+Dalla directory `v2/` del checkout temporaneo installare esclusivamente le
+dipendenze determinate dal lockfile:
+
+```bash
+cd "$TEMP_DIR/v2"
+npm ci
+```
+
+Non copiare `.dev.vars`, token, credenziali o altri file non tracciati nel
+checkout temporaneo.
+
+Prima del deploy eseguire almeno:
+
+```bash
+node --check src/index.mjs
+node --check src/mcp/server.mjs
+node --check src/mcp/task-repository.mjs
+npm run verify:isolation
+npm run test:unit
+node scripts/verify-foundation.mjs
+npm test
+./node_modules/.bin/wrangler deploy --dry-run
+```
+
+Verificare inoltre:
+
+- `git diff --check`;
+- assenza di secret nel commit;
+- configurazione e binding in `wrangler.jsonc`;
+- identità Cloudflare e D1 mediante operazioni read-only;
+- stato remoto iniziale tramite `/health`, `/ready`, discovery MCP e query SQL
+  esclusivamente `SELECT`.
+
+Dopo `npm ci` e dopo le verifiche locali, prima del deploy:
+
+- eseguire `git status --short` nel checkout temporaneo;
+- confermare che nessun file tracciato sia stato modificato;
+- confermare che non esistano modifiche inattese nel checkout;
+- fermarsi se il checkout non è conforme.
+
+La directory `node_modules` generata e ignorata non costituisce di per sé una
+modifica ai file tracciati.
+
+### Deploy DEV
+
+Il deploy richiede un’autorizzazione esplicita separata dalle verifiche locali e
+dai test mutativi.
+
+Dalla directory `v2/` del checkout temporaneo eseguire esclusivamente:
+
+```bash
+./node_modules/.bin/wrangler deploy
+```
+
+Non applicare migrazioni e non modificare binding, variabili o secret durante
+questa operazione.
+
+Registrare il Version ID restituito da Wrangler. Fermarsi se Wrangler non
+restituisce un’identità di deploy coerente con `desk-v2-foundation-dev`.
+
+### Verifiche read-only post-deploy
+
+Prima di qualsiasi test mutativo verificare:
+
+1. `GET /health` restituisce HTTP 200;
+2. `GET /ready` restituisce HTTP 200;
+3. la discovery MCP restituisce esattamente 11 tool;
+4. `desk_v2_update_task` è presente;
+5. lo schema di `desk_v2_update_task` è strict e corrisponde al contratto
+   approvato;
+6. le annotations sono:
+
+   ```text
+   readOnlyHint: false
+   destructiveHint: false
+   idempotentHint: true
+   openWorldHint: false
+   ```
+
+7. per questo rilascio la baseline autorizzata di D1 contiene esattamente le
+   migrazioni:
+
+   ```text
+   0001_foundation.sql
+   0002_mcp_capability_test.sql
+   0003_container_create_idempotency.sql
+   ```
+
+8. i conteggi reali di `containers`, `tasks`, `mcp_idempotency` e
+   `mcp_capability_test` sono stati osservati tramite query `SELECT` e
+   confrontati con la baseline pre-deploy.
+
+Migrazioni aggiuntive o mancanti bloccano questo rilascio, salvo una nuova
+approvazione esplicita. Questa condizione non costituisce un divieto permanente
+di future migrazioni autorizzate.
+
+Le query di verifica devono essere esclusivamente read-only. Non eseguire
+migration, DDL, `INSERT`, `UPDATE` o `DELETE` durante questa fase.
+
+### Test mutativi e cleanup
+
+Il deploy non autorizza automaticamente test mutativi.
+
+Fixture, chiamate MCP write, cleanup e qualsiasi scrittura D1 richiedono una
+seconda autorizzazione esplicita. Prima di crearle documentare:
+
+- idempotency key esatte;
+- ID attesi o restituiti;
+- conteggi D1 iniziali;
+- ordine di creazione e cleanup;
+- condizioni di arresto.
+
+Il cleanup deve cancellare soltanto le fixture autorizzate usando ID e key
+esatti. Sono vietati wildcard, prefissi, `DELETE` globali e `TRUNCATE`.
+
+Dopo il cleanup verificare mediante `SELECT`:
+
+- assenza individuale di ogni fixture;
+- ripristino esatto dei conteggi D1 iniziali;
+- assenza di record idempotenti orfani.
+
+### Condizioni di arresto
+
+Fermarsi immediatamente senza ulteriori mutation se:
+
+- account, Worker, URL, D1, UUID, binding o entry point differiscono;
+- lo SHA del checkout non è quello autorizzato;
+- il checkout non è pulito;
+- il dry-run non è PASS;
+- il Version ID o l’identità restituita dal deploy sono inattesi;
+- `/health` o `/ready` non restituiscono HTTP 200;
+- la discovery non contiene esattamente 11 tool;
+- `desk_v2_update_task`, schema o annotations differiscono;
+- migrazioni o conteggi D1 differiscono dalla baseline senza una spiegazione
+  autorizzata;
+- un test modifica dati estranei;
+- il cleanup non ripristina esattamente lo stato iniziale.
+
+Non tentare automaticamente deploy alternativi, rollback, migrazioni o cleanup
+più ampi.
+
+### Rimozione del checkout temporaneo
+
+Conservare il checkout temporaneo fino al completamento di tutte le verifiche
+post-deploy e dell’eventuale cleanup autorizzato.
+
+Dopo la chiusura verificata del rilascio:
+
+1. confermare nuovamente il percorso esatto del checkout;
+2. accertare che non contenga modifiche o dati da conservare;
+3. rimuoverlo dal repository originale con:
+
+   ```bash
+   git worktree remove "<percorso-temporaneo-esatto>"
+   ```
+
+4. verificare con `git worktree list` che sia stato rimosso.
+
+Non usare percorsi generici, glob, variabili non verificate o cancellazioni
+ricorsive manuali.
+
 ## Pubblicazione Apps Script
 
 1. Caricare la copia pulita con `clasp push`.
