@@ -225,11 +225,23 @@ Prima di qualsiasi test mutativo verificare:
 
 1. `GET /health` restituisce HTTP 200;
 2. `GET /ready` restituisce HTTP 200;
-3. la discovery MCP restituisce esattamente 11 tool;
-4. `desk_v2_update_task` è presente;
-5. lo schema di `desk_v2_update_task` è strict e corrisponde al contratto
-   approvato;
-6. le annotations sono:
+3. la discovery MCP restituisce esattamente 12 tool:
+   - `desk_v2_create_container`;
+   - `desk_v2_move_container`;
+   - `desk_v2_update_container`;
+   - `desk_v2_archive_container`;
+   - `desk_v2_restore_container`;
+   - `desk_v2_get_containers`;
+   - `desk_v2_create_task`;
+   - `desk_v2_get_tasks`;
+   - `desk_v2_update_task`;
+   - `desk_v2_move_task`;
+   - `desk_v2_capability_read`;
+   - `desk_v2_capability_write`;
+4. `desk_v2_update_task` e `desk_v2_move_task` sono presenti;
+5. gli schemi di `desk_v2_update_task` e `desk_v2_move_task` sono strict e
+   corrispondono ai contratti approvati;
+6. le annotations di entrambi i tool sono:
 
    ```text
    readOnlyHint: false
@@ -290,8 +302,9 @@ Fermarsi immediatamente senza ulteriori mutation se:
 - il dry-run non è PASS;
 - il Version ID o l’identità restituita dal deploy sono inattesi;
 - `/health` o `/ready` non restituiscono HTTP 200;
-- la discovery non contiene esattamente 11 tool;
-- `desk_v2_update_task`, schema o annotations differiscono;
+- la discovery non contiene esattamente 12 tool;
+- `desk_v2_update_task`, `desk_v2_move_task`, i relativi schemi o annotations
+  differiscono;
 - migrazioni o conteggi D1 differiscono dalla baseline senza una spiegazione
   autorizzata;
 - un test modifica dati estranei;
