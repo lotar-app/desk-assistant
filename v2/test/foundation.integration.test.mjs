@@ -123,7 +123,7 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
     });
     try {
       const tools = await client.listTools();
-      assert.equal(tools.tools.length, 11);
+      assert.equal(tools.tools.length, 12);
       assert.ok(tools.tools.some(tool => tool.name === "desk_v2_get_containers"));
       assert.ok(tools.tools.some(tool => tool.name === "desk_v2_create_container"));
       assert.ok(tools.tools.some(tool => tool.name === "desk_v2_move_container"));
@@ -889,7 +889,7 @@ test("task read foundation usa Worker e transport MCP isolati", async () => {
     });
 
     const listed = await client.listTools();
-    assert.equal(listed.tools.length, 11);
+    assert.equal(listed.tools.length, 12);
     const taskTool = listed.tools.find(tool => tool.name === "desk_v2_get_tasks");
     assert.ok(taskTool);
     assert.deepEqual(taskTool.annotations, {
@@ -1046,7 +1046,7 @@ test("task create foundation usa Worker e transport MCP isolati", async () => {
     });
 
     const listed = await client.listTools();
-    assert.equal(listed.tools.length, 11);
+    assert.equal(listed.tools.length, 12);
     const createTool = listed.tools.find(tool => tool.name === "desk_v2_create_task");
     assert.ok(createTool);
     assert.deepEqual(createTool.annotations, {
@@ -1213,6 +1213,8 @@ test("task update foundation usa Worker e transport MCP isolati", async () => {
       VALUES
       ('TASK-UPDATE-ACTIVE',NULL,'Task Update Active','IN_PROGRESS','ACTIVE',1,
        '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z',NULL),
+      ('TASK-MOVE-DESTINATION',NULL,'Task Move Destination','IN_PROGRESS','ACTIVE',1,
+       '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z',NULL),
       ('TASK-UPDATE-ARCHIVED',NULL,'Task Update Archived','IN_PROGRESS','ARCHIVED',1,
        '2026-01-01T00:00:00.000Z','2026-01-02T00:00:00.000Z',
        '2026-01-02T00:00:00.000Z');`);
@@ -1234,7 +1236,12 @@ test("task update foundation usa Worker e transport MCP isolati", async () => {
        '2026-01-02T00:00:00.000Z',NULL,'2026-01-02T00:00:00.000Z'),
       ('TASK-UPDATE-ARCHIVED-PARENT','TASK-UPDATE-ARCHIVED','Archived Parent',NULL,'OPEN',
        NULL,NULL,NULL,'ACTIVE',1,'2026-01-01T00:00:00.000Z',
-       '2026-01-01T00:00:00.000Z',NULL,NULL);`);
+       '2026-01-01T00:00:00.000Z',NULL,NULL),
+      ('TASK-MOVE-REAL','TASK-UPDATE-ACTIVE','Move Real','Preserved','DONE','HIGH','Max',
+       '2026-10-20','ACTIVE',1,'2026-01-01T00:00:00.000Z',
+       '2026-01-01T00:00:00.000Z','2026-01-03T00:00:00.000Z',NULL),
+      ('TASK-MOVE-ROLLBACK','TASK-UPDATE-ACTIVE','Move Rollback',NULL,'OPEN',NULL,NULL,
+       NULL,'ACTIVE',1,'2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z',NULL,NULL);`);
 
     workerProcess = spawn(wrangler, ["dev", "--local", "--persist-to", persistence,
       "--port", String(port), "--ip", "127.0.0.1", "--var",
@@ -1252,9 +1259,12 @@ test("task update foundation usa Worker e transport MCP isolati", async () => {
     });
 
     const listed = await client.listTools();
-    assert.equal(listed.tools.length, 11);
+    assert.equal(listed.tools.length, 12);
     const updateTool = listed.tools.find(tool => tool.name === "desk_v2_update_task");
     assert.deepEqual(updateTool.annotations, { readOnlyHint: false, destructiveHint: false,
+      idempotentHint: true, openWorldHint: false });
+    const moveTaskTool = listed.tools.find(tool => tool.name === "desk_v2_move_task");
+    assert.deepEqual(moveTaskTool.annotations, { readOnlyHint: false, destructiveHint: false,
       idempotentHint: true, openWorldHint: false });
     const input = { idempotencyKey: "foundation-task-update-real",
       taskId: " TASK-UPDATE-REAL ", expectedVersion: 1,
@@ -1336,6 +1346,49 @@ test("task update foundation usa Worker e transport MCP isolati", async () => {
     assert.equal(failed.structuredContent.error.code, "D1_OPERATION_FAILED");
     execute("DROP TRIGGER task_update_test_forced_failure;");
 
+    const moveNoOpInput = { idempotencyKey: "foundation-task-move-noop",
+      taskId: "TASK-MOVE-REAL", expectedVersion: 1,
+      destinationContainerId: "TASK-UPDATE-ACTIVE" };
+    const moveNoOp = await client.callTool({ name: "desk_v2_move_task",
+      arguments: moveNoOpInput });
+    assert.equal(moveNoOp.structuredContent.changed, false);
+    assert.equal(moveNoOp.structuredContent.task.version, 1);
+    assert.equal(moveNoOp.structuredContent.task.updatedAt, "2026-01-01T00:00:00.000Z");
+    assert.equal((await client.callTool({ name: "desk_v2_move_task",
+      arguments: moveNoOpInput })).structuredContent.replayed, true);
+
+    const moveInput = { idempotencyKey: "foundation-task-move-real",
+      taskId: "TASK-MOVE-REAL", expectedVersion: 1,
+      destinationContainerId: "TASK-MOVE-DESTINATION" };
+    const moved = await client.callTool({ name: "desk_v2_move_task", arguments: moveInput });
+    assert.equal(moved.structuredContent.changed, true);
+    assert.equal(moved.structuredContent.task.containerId, "TASK-MOVE-DESTINATION");
+    assert.equal(moved.structuredContent.task.version, 2);
+    assert.equal(moved.structuredContent.task.createdAt, "2026-01-01T00:00:00.000Z");
+    assert.notEqual(moved.structuredContent.task.updatedAt, "2026-01-01T00:00:00.000Z");
+    assert.equal(moved.structuredContent.task.completedAt, "2026-01-03T00:00:00.000Z");
+    assert.equal((await client.callTool({ name: "desk_v2_move_task", arguments: moveInput }))
+      .structuredContent.replayed, true);
+    const sourceTasks = await client.callTool({ name: "desk_v2_get_tasks",
+      arguments: { containerId: "TASK-UPDATE-ACTIVE" } });
+    assert.equal(sourceTasks.structuredContent.tasks.some(task =>
+      task.taskId === "TASK-MOVE-REAL"), false);
+    const destinationTasks = await client.callTool({ name: "desk_v2_get_tasks",
+      arguments: { containerId: "TASK-MOVE-DESTINATION" } });
+    assert.deepEqual(destinationTasks.structuredContent.tasks.map(task => task.taskId),
+      ["TASK-MOVE-REAL"]);
+
+    execute(`CREATE TRIGGER task_move_test_forced_failure BEFORE UPDATE OF container_id ON tasks
+      WHEN NEW.task_id='TASK-MOVE-ROLLBACK'
+      BEGIN SELECT RAISE(ABORT, 'TASK_MOVE_TEST_FAILURE'); END;`);
+    const moveFailed = await client.callTool({ name: "desk_v2_move_task", arguments: {
+      idempotencyKey: "foundation-task-move-rollback", taskId: "TASK-MOVE-ROLLBACK",
+      expectedVersion: 1, destinationContainerId: "TASK-MOVE-DESTINATION"
+    } });
+    assert.equal(moveFailed.structuredContent.error.code, "D1_OPERATION_FAILED");
+    assert.equal(moveFailed.structuredContent.error.message, "The Task could not be moved.");
+    execute("DROP TRIGGER task_move_test_forced_failure;");
+
     await client.close();
     client = undefined;
     await stopWorker(workerProcess);
@@ -1350,6 +1403,21 @@ test("task update foundation usa Worker e transport MCP isolati", async () => {
       WHERE idempotency_key='foundation-task-update-rollback';`, /value[^0-9]*0/i);
     assertQuery(`SELECT COUNT(*) AS value FROM mcp_idempotency
       WHERE operation='desk_v2_update_task';`, /value[^0-9]*4/i);
+    assertQuery(`SELECT COUNT(*) AS value FROM tasks
+      WHERE task_id='TASK-MOVE-REAL' AND container_id='TASK-MOVE-DESTINATION' AND version=2
+        AND title='Move Real' AND description='Preserved' AND status='DONE'
+        AND priority='HIGH' AND assignee='Max' AND due_date='2026-10-20'
+        AND lifecycle_state='ACTIVE' AND created_at='2026-01-01T00:00:00.000Z'
+        AND completed_at='2026-01-03T00:00:00.000Z' AND archived_at IS NULL;`,
+    /value[^0-9]*1/i);
+    assertQuery(`SELECT COUNT(*) AS value FROM mcp_idempotency
+      WHERE operation='desk_v2_move_task';`, /value[^0-9]*2/i);
+    assertQuery(`SELECT COUNT(*) AS value FROM tasks
+      WHERE task_id='TASK-MOVE-ROLLBACK' AND container_id='TASK-UPDATE-ACTIVE'
+        AND version=1 AND updated_at='2026-01-01T00:00:00.000Z';`, /value[^0-9]*1/i);
+    assertQuery(`SELECT COUNT(*) AS value FROM mcp_idempotency
+      WHERE operation='desk_v2_move_task'
+        AND idempotency_key='foundation-task-move-rollback';`, /value[^0-9]*0/i);
   } finally {
     if (client) await client.close().catch(() => {});
     await stopWorker(workerProcess);

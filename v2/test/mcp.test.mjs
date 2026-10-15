@@ -35,6 +35,7 @@ test("client MCP ufficiale esegue handshake, discovery, read e write isolata", a
       "desk_v2_get_containers",
       "desk_v2_get_tasks",
       "desk_v2_move_container",
+      "desk_v2_move_task",
       "desk_v2_restore_container",
       "desk_v2_update_container",
       "desk_v2_update_task"
@@ -47,6 +48,7 @@ test("client MCP ufficiale esegue handshake, discovery, read e write isolata", a
     const updateTool = listed.tools.find(tool => tool.name === "desk_v2_update_container");
     const createTaskTool = listed.tools.find(tool => tool.name === "desk_v2_create_task");
     const updateTaskTool = listed.tools.find(tool => tool.name === "desk_v2_update_task");
+    const moveTaskTool = listed.tools.find(tool => tool.name === "desk_v2_move_task");
     const tasksTool = listed.tools.find(tool => tool.name === "desk_v2_get_tasks");
     const archiveTool = listed.tools.find(tool => tool.name === "desk_v2_archive_container");
     const restoreTool = listed.tools.find(tool => tool.name === "desk_v2_restore_container");
@@ -108,6 +110,16 @@ test("client MCP ufficiale esegue handshake, discovery, read e write isolata", a
       openWorldHint: false
     });
     assert.equal(updateTaskTool.inputSchema.properties.patch.minProperties, 1);
+    assert.deepEqual(moveTaskTool.annotations, {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    });
+    assert.deepEqual(moveTaskTool.inputSchema.required.sort(), [
+      "destinationContainerId", "expectedVersion", "idempotencyKey", "taskId"
+    ]);
+    assert.equal(moveTaskTool.inputSchema.additionalProperties, false);
 
     const before = database.snapshot();
     const read = await client.callTool({ name: "desk_v2_capability_read", arguments: {} });
@@ -655,6 +667,173 @@ test("task update serializza concorrenza e rollbacka senza orfani", async () => 
     assert.equal(result.structuredContent.error.code, "D1_OPERATION_FAILED");
     assert.equal(result.structuredContent.error.retryable, true);
     assert.equal(failing.getTask("T").title, "Original");
+    assert.equal(failing.getTask("T").version, 1);
+    assert.equal(failing.snapshot().idempotency, 0);
+  });
+});
+
+test("task move valida schema, dominio e assenza di side effect sugli errori", async () => {
+  const database = fakeDb([
+    container({ id: "A", name: "A" }), container({ id: "B", name: "B" }),
+    container({ id: "ARCHIVED-C", name: "Archived", lifecycle: "ARCHIVED" })
+  ], { tasks: [
+    task({ id: "ACTIVE-T", containerId: "A", title: "Active" }),
+    task({ id: "ARCHIVED-T", containerId: "A", title: "Archived", lifecycle: "ARCHIVED" }),
+    task({ id: "UNDER-ARCHIVED", containerId: "ARCHIVED-C", title: "Blocked" })
+  ] });
+  await withClient(database, async client => {
+    for (const [arguments_, code] of [
+      [{}, null],
+      [{ idempotencyKey: "move", taskId: "ACTIVE-T", expectedVersion: 1 }, null],
+      [{ idempotencyKey: "move", taskId: "", expectedVersion: 1,
+        destinationContainerId: "B" }, "INVALID_TASK_ID"],
+      [{ idempotencyKey: "move", taskId: "ACTIVE-T", expectedVersion: 0,
+        destinationContainerId: "B" }, "INVALID_EXPECTED_VERSION"],
+      [{ idempotencyKey: "move", taskId: "ACTIVE-T", expectedVersion: 1,
+        destinationContainerId: " " }, "INVALID_DESTINATION_CONTAINER_ID"],
+      [{ idempotencyKey: "bad key", taskId: "ACTIVE-T", expectedVersion: 1,
+        destinationContainerId: "B" }, "INVALID_IDEMPOTENCY_KEY"],
+      [{ idempotencyKey: "move", taskId: "ACTIVE-T", expectedVersion: 1,
+        destinationContainerId: "B", extra: true }, null]
+    ]) {
+      const result = await client.callTool({ name: "desk_v2_move_task", arguments: arguments_ });
+      assert.equal(result.isError, true, JSON.stringify(arguments_));
+      if (code) assert.match(result.content[0].text, new RegExp(code));
+    }
+    for (const [key, taskId, version, destination, code, message] of [
+      ["missing-task", "MISSING", 1, "B", "TASK_NOT_FOUND", /does not exist/i],
+      ["archived-task", "ARCHIVED-T", 1, "B", "TASK_ARCHIVED", /archived Task/i],
+      ["source-archived", "UNDER-ARCHIVED", 1, "B", "CONTAINER_ARCHIVED", /from an archived/i],
+      ["stale", "ACTIVE-T", 2, "B", "TASK_VERSION_CONFLICT", /changed since/i],
+      ["missing-destination", "ACTIVE-T", 1, "MISSING", "CONTAINER_NOT_FOUND", /destination/i],
+      ["archived-destination", "ACTIVE-T", 1, "ARCHIVED-C", "CONTAINER_ARCHIVED", /to an archived/i]
+    ]) {
+      const result = await client.callTool({ name: "desk_v2_move_task", arguments: {
+        idempotencyKey: key, taskId, expectedVersion: version,
+        destinationContainerId: destination
+      } });
+      assert.equal(result.structuredContent.error.code, code);
+      assert.match(result.structuredContent.error.message, message);
+    }
+    assert.equal(database.snapshot().idempotency, 0);
+    assert.equal(database.getTask("ACTIVE-T").container_id, "A");
+  });
+});
+
+test("task move usa il messaggio approvato per classificazioni anomale", async () => {
+  for (const forcedTaskMoveOutcome of [undefined, "UNEXPECTED_STATE", "UNKNOWN_OUTCOME"]) {
+    const database = fakeDb([
+      container({ id: "A", name: "A" }), container({ id: "B", name: "B" })
+    ], { tasks: [task({ id: "T", containerId: "A", title: "Task" })],
+      forcedTaskMoveOutcome,
+      omitTaskMoveOutcome: forcedTaskMoveOutcome === undefined });
+    await withClient(database, async client => {
+      const result = await client.callTool({ name: "desk_v2_move_task", arguments: {
+        idempotencyKey: `fallback-${forcedTaskMoveOutcome ?? "missing"}`,
+        taskId: "T", expectedVersion: 1, destinationContainerId: "B"
+      } });
+      assert.equal(result.isError, true);
+      assert.deepEqual(result.structuredContent, { error: {
+        code: "D1_OPERATION_FAILED", message: "The Task could not be moved.", retryable: true
+      } });
+    });
+  }
+});
+
+test("task move preserva identità e campi, gestisce no-op e replay storico", async () => {
+  const database = fakeDb([
+    container({ id: "A", name: "A" }), container({ id: "B", name: "B" })
+  ], { tasks: [task({ id: "T", containerId: "A", title: "Completed",
+    description: "Description", status: "DONE", priority: "HIGH", assignee: "Max",
+    dueDate: "2026-10-20", completedAt: "2026-10-10T12:00:00.000Z" })] });
+  await withClient(database, async client => {
+    const before = structuredClone(database.getTask("T"));
+    const noOpInput = { idempotencyKey: "task-move-noop", taskId: " T ",
+      expectedVersion: 1, destinationContainerId: " A " };
+    const noOp = await callMoveTask(client, noOpInput);
+    assert.equal(noOp.changed, false);
+    assert.equal(noOp.task.version, 1);
+    assert.equal(noOp.task.updatedAt, before.updated_at);
+    assert.equal(database.snapshot().idempotency, 1);
+    assert.equal((await callMoveTask(client, noOpInput)).replayed, true);
+
+    const input = { idempotencyKey: "task-move-real", taskId: "T",
+      expectedVersion: 1, destinationContainerId: "B" };
+    const moved = await callMoveTask(client, input);
+    assert.equal(moved.replayed, false);
+    assert.equal(moved.changed, true);
+    assert.equal(moved.task.taskId, "T");
+    assert.equal(moved.task.containerId, "B");
+    assert.equal(moved.task.version, 2);
+    assert.notEqual(moved.task.updatedAt, before.updated_at);
+    assert.deepEqual({
+      title: moved.task.title, description: moved.task.description, status: moved.task.status,
+      priority: moved.task.priority, assignee: moved.task.assignee, dueDate: moved.task.dueDate,
+      lifecycleState: moved.task.lifecycleState, createdAt: moved.task.createdAt,
+      completedAt: moved.task.completedAt, archivedAt: moved.task.archivedAt
+    }, {
+      title: before.title, description: before.description, status: before.status,
+      priority: before.priority, assignee: before.assignee, dueDate: before.due_date,
+      lifecycleState: before.lifecycle_state, createdAt: before.created_at,
+      completedAt: before.completed_at, archivedAt: before.archived_at
+    });
+    assert.equal((await callTasks(client, { taskId: "T" })).tasks[0].containerId, "B");
+    assert.deepEqual((await callTasks(client, { containerId: "A" })).tasks, []);
+    assert.deepEqual((await callTasks(client, { containerId: "B" })).tasks.map(row => row.taskId), ["T"]);
+
+    database.updateTask("T", { title: "Later", version: 3 });
+    const replay = await callMoveTask(client, input);
+    assert.equal(replay.replayed, true);
+    assert.deepEqual(replay.task, moved.task);
+    const conflict = await client.callTool({ name: "desk_v2_move_task", arguments: {
+      ...input, destinationContainerId: "A"
+    } });
+    assert.equal(conflict.structuredContent.error.code, "IDEMPOTENCY_KEY_CONFLICT");
+  });
+});
+
+test("task move serializza concorrenza e rollbacka senza ricevute orfane", async () => {
+  const sameKey = fakeDb([
+    container({ id: "A", name: "A" }), container({ id: "B", name: "B" })
+  ], { tasks: [task({ id: "T", containerId: "A", title: "Task" })] });
+  await withClient(sameKey, async client => {
+    const input = { idempotencyKey: "same", taskId: "T", expectedVersion: 1,
+      destinationContainerId: "B" };
+    const results = await Promise.all([callMoveTask(client, input), callMoveTask(client, input)]);
+    assert.deepEqual(results.map(result => result.replayed).sort(), [false, true]);
+    assert.equal(sameKey.getTask("T").version, 2);
+  });
+
+  const differentKeys = fakeDb([
+    container({ id: "A", name: "A" }), container({ id: "B", name: "B" }),
+    container({ id: "C", name: "C" })
+  ], { tasks: [task({ id: "T", containerId: "A", title: "Task" })] });
+  await withClient(differentKeys, async client => {
+    const results = await Promise.all([
+      client.callTool({ name: "desk_v2_move_task", arguments: {
+        idempotencyKey: "one", taskId: "T", expectedVersion: 1,
+        destinationContainerId: "B" } }),
+      client.callTool({ name: "desk_v2_move_task", arguments: {
+        idempotencyKey: "two", taskId: "T", expectedVersion: 1,
+        destinationContainerId: "C" } })
+    ]);
+    assert.equal(results.filter(result => result.isError !== true).length, 1);
+    assert.equal(results.find(result => result.isError === true)
+      .structuredContent.error.code, "TASK_VERSION_CONFLICT");
+    assert.equal(differentKeys.snapshot().idempotency, 1);
+  });
+
+  const failing = fakeDb([
+    container({ id: "A", name: "A" }), container({ id: "B", name: "B" })
+  ], { tasks: [task({ id: "T", containerId: "A", title: "Task" })],
+    failNextTaskMoveBatch: true });
+  await withClient(failing, async client => {
+    const result = await client.callTool({ name: "desk_v2_move_task", arguments: {
+      idempotencyKey: "failure", taskId: "T", expectedVersion: 1,
+      destinationContainerId: "B" } });
+    assert.equal(result.structuredContent.error.code, "D1_OPERATION_FAILED");
+    assert.equal(result.structuredContent.error.retryable, true);
+    assert.equal(failing.getTask("T").container_id, "A");
     assert.equal(failing.getTask("T").version, 1);
     assert.equal(failing.snapshot().idempotency, 0);
   });
@@ -1473,6 +1652,12 @@ async function callUpdateTask(client, args) {
   return result.structuredContent;
 }
 
+async function callMoveTask(client, args) {
+  const result = await client.callTool({ name: "desk_v2_move_task", arguments: args });
+  assert.notEqual(result.isError, true, JSON.stringify(result.structuredContent));
+  return result.structuredContent;
+}
+
 async function callCreate(client, args) {
   const result = await client.callTool({ name: "desk_v2_create_container", arguments: args });
   assert.notEqual(result.isError, true, JSON.stringify(result.structuredContent));
@@ -1540,6 +1725,7 @@ function fakeDb(containers = [], options = {}) {
   let failNextTaskCreateBatch = options.failNextTaskCreateBatch === true;
   let collideNextTaskCreate = options.collideNextTaskCreate === true;
   let failNextTaskUpdateBatch = options.failNextTaskUpdateBatch === true;
+  let failNextTaskMoveBatch = options.failNextTaskMoveBatch === true;
   let collidedId = null;
   const database = {
     prepare(sql) {
@@ -1675,6 +1861,14 @@ function fakeDb(containers = [], options = {}) {
           return taskUpdateBatch({ statements, state, audit, before, options: {
             get failNextTaskUpdateBatch() { return failNextTaskUpdateBatch; },
             clearFailure() { failNextTaskUpdateBatch = false; }
+          } });
+        }
+        if (operation === "desk_v2_move_task") {
+          return taskMoveBatch({ statements, state, audit, before, options: {
+            get failNextTaskMoveBatch() { return failNextTaskMoveBatch; },
+            clearFailure() { failNextTaskMoveBatch = false; },
+            forcedTaskMoveOutcome: options.forcedTaskMoveOutcome,
+            omitTaskMoveOutcome: options.omitTaskMoveOutcome === true
           } });
         }
         if (operation === "desk_v2_update_container") {
@@ -1899,6 +2093,70 @@ function taskUpdateBatch({ statements, state, audit, before, options }) {
     else if (source.lifecycle_state === "ARCHIVED") outcome = "TASK_ARCHIVED";
     else if (parent?.lifecycle_state === "ARCHIVED") outcome = "CONTAINER_ARCHIVED";
     else if (source.version !== expectedVersion) outcome = "VERSION_CONFLICT";
+    return [{ success: true }, { success: true }, { success: true,
+      results: [{ outcome, response_json: record?.response_json ?? null }] }];
+  } catch (error) {
+    state.containers = before.containers;
+    state.tasks = before.tasks;
+    state.markers = before.markers;
+    state.idempotency = before.idempotency;
+    throw error;
+  }
+}
+
+function taskMoveBatch({ statements, state, audit, before, options }) {
+  try {
+    const values = statements[0]._values();
+    const [operation, key, hash, attemptId, resourceType, resourceId,
+      responseJson, completedAt, sourceId, expectedVersion, destinationId] = values;
+    const existing = state.idempotency.find(row => row.operation === operation
+      && row.idempotency_key === key);
+    const source = state.tasks.find(row => row.task_id === sourceId);
+    const sourceContainer = state.containers.find(row => row.container_id === source?.container_id);
+    const destination = state.containers.find(row => row.container_id === destinationId);
+    const valid = source?.lifecycle_state === "ACTIVE"
+      && sourceContainer?.lifecycle_state === "ACTIVE"
+      && source.version === expectedVersion
+      && destination?.lifecycle_state === "ACTIVE";
+    if (!existing && valid) {
+      state.idempotency.push({ operation, idempotency_key: key, request_hash: hash,
+        attempt_id: attemptId, resource_type: resourceType, resource_id: resourceId,
+        response_json: responseJson, completed_at: completedAt });
+    }
+    const acquired = state.idempotency.find(row => row.operation === operation
+      && row.idempotency_key === key && row.request_hash === hash
+      && row.attempt_id === attemptId);
+    if (acquired && options.failNextTaskMoveBatch) {
+      options.clearFailure();
+      throw new Error("synthetic task move failure");
+    }
+    const response = acquired ? JSON.parse(responseJson) : null;
+    if (acquired && response.changed) {
+      source.container_id = response.task.containerId;
+      source.version = response.task.version;
+      source.updated_at = response.task.updatedAt;
+      audit.writes += 2;
+    } else if (acquired) {
+      audit.writes += 1;
+    }
+    const record = state.idempotency.find(row => row.operation === operation
+      && row.idempotency_key === key);
+    let outcome = "UNEXPECTED_STATE";
+    if (record && record.request_hash !== hash) outcome = "IDEMPOTENCY_CONFLICT";
+    else if (record && record.attempt_id === attemptId) outcome = "COMPLETED";
+    else if (record && record.request_hash === hash) outcome = "REPLAY";
+    else if (!source) outcome = "TASK_NOT_FOUND";
+    else if (source.lifecycle_state === "ARCHIVED") outcome = "TASK_ARCHIVED";
+    else if (sourceContainer?.lifecycle_state === "ARCHIVED") outcome = "SOURCE_ARCHIVED";
+    else if (source.version !== expectedVersion) outcome = "VERSION_CONFLICT";
+    else if (!destination) outcome = "DESTINATION_NOT_FOUND";
+    else if (destination.lifecycle_state === "ARCHIVED") outcome = "DESTINATION_ARCHIVED";
+    if (options.omitTaskMoveOutcome) {
+      return [{ success: true }, { success: true }, { success: true, results: [] }];
+    }
+    if (options.forcedTaskMoveOutcome !== undefined) {
+      outcome = options.forcedTaskMoveOutcome;
+    }
     return [{ success: true }, { success: true }, { success: true,
       results: [{ outcome, response_json: record?.response_json ?? null }] }];
   } catch (error) {

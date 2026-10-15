@@ -188,6 +188,20 @@ const updateTaskOutputSchema = z.object({
   changed: z.boolean(),
   task: taskSchema
 }).strict();
+const destinationContainerIdSchema = z.string({ error: "INVALID_DESTINATION_CONTAINER_ID" })
+  .transform(value => value.trim())
+  .pipe(z.string().min(1, "INVALID_DESTINATION_CONTAINER_ID"));
+const moveTaskInputSchema = z.object({
+  idempotencyKey: idempotencyKeySchema,
+  taskId: taskIdSchema,
+  expectedVersion: expectedVersionSchema,
+  destinationContainerId: destinationContainerIdSchema
+}).strict();
+const moveTaskOutputSchema = z.object({
+  replayed: z.boolean(),
+  changed: z.boolean(),
+  task: taskSchema
+}).strict();
 const toolErrorSchema = z.object({
   error: z.object({
     code: z.string(),
@@ -435,6 +449,32 @@ export function createDeskMcpServer(env) {
           return errorResult(error.code, error.message, error.retryable);
         }
         return errorResult("D1_OPERATION_FAILED", "The Task could not be updated.", true);
+      }
+    }
+  );
+
+  server.registerTool(
+    "desk_v2_move_task",
+    {
+      title: "Move Desk V2 Task",
+      description: "Moves one active Task between active Containers while preserving its identity and domain fields. Requires optimistic concurrency and an idempotency key.",
+      inputSchema: moveTaskInputSchema,
+      outputSchema: z.union([moveTaskOutputSchema, toolErrorSchema]),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      }
+    },
+    async input => {
+      try {
+        return result(await taskRepository.moveTask(input));
+      } catch (error) {
+        if (error instanceof TaskDomainError) {
+          return errorResult(error.code, error.message, error.retryable);
+        }
+        return errorResult("D1_OPERATION_FAILED", "The Task could not be moved.", true);
       }
     }
   );
