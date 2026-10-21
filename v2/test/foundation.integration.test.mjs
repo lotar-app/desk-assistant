@@ -29,12 +29,14 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
     assertQuery("SELECT count(*) AS value FROM d1_migrations WHERE name = '0001_foundation.sql';", /value[^0-9]*1/i);
     assertQuery("SELECT count(*) AS value FROM d1_migrations WHERE name = '0002_mcp_capability_test.sql';", /value[^0-9]*1/i);
     assertQuery("SELECT count(*) AS value FROM d1_migrations WHERE name = '0003_container_create_idempotency.sql';", /value[^0-9]*1/i);
+    assertQuery("SELECT count(*) AS value FROM d1_migrations WHERE name = '0004_hierarchy_schema_preparation.sql';", /value[^0-9]*1/i);
     assertQuery("SELECT value FROM system_metadata WHERE key = 'system_name';", /desk-v2/i);
     assertQuery("SELECT value FROM system_metadata WHERE key = 'environment';", /v2-development/i);
     assertQuery("PRAGMA foreign_keys;", /foreign_keys[^0-9]*1/i);
     assertQuery(`SELECT count(*) AS value FROM sqlite_master WHERE type = 'table'
       AND name IN ('system_metadata','containers','tasks','d1_migrations','mcp_capability_test',
-        'mcp_idempotency');`, /value[^0-9]*6/i);
+        'mcp_idempotency','desk_hierarchy');`, /value[^0-9]*7/i);
+    assertQuery("SELECT count(*) AS value FROM desk_hierarchy;", /value[^0-9]*0/i);
     assertQuery("SELECT count(*) AS value FROM mcp_capability_test;", /value[^0-9]*0/i);
 
     execute(`INSERT INTO containers
@@ -1425,7 +1427,7 @@ test("task update foundation usa Worker e transport MCP isolati", async () => {
   }
 });
 
-test("migration chain 0001, 0002 e 0003 si applica senza modificare le precedenti", () => {
+test("migration chain 0001-0004 prepara la gerarchia senza alterare dati legacy", () => {
   const persistence = fs.mkdtempSync(path.join(os.tmpdir(), "desk-v2-staged-"));
   try {
     command(["d1", "execute", "DESK_V2_DB", "--local", "--persist-to",
@@ -1434,13 +1436,78 @@ test("migration chain 0001, 0002 e 0003 si applica senza modificare le precedent
       persistence, "--file", path.join(root, "migrations", "0002_mcp_capability_test.sql")]);
     command(["d1", "execute", "DESK_V2_DB", "--local", "--persist-to",
       persistence, "--file", path.join(root, "migrations", "0003_container_create_idempotency.sql")]);
-    const result = command(["d1", "execute", "DESK_V2_DB", "--local", "--persist-to",
-      persistence, "--command", "SELECT COUNT(*) AS value FROM mcp_capability_test;"]);
-    assert.match(result, /value[^0-9]*0/i);
-    const idempotency = command(["d1", "execute", "DESK_V2_DB", "--local",
-      "--persist-to", persistence, "--command",
-      "SELECT COUNT(*) AS value FROM mcp_idempotency;"]);
-    assert.match(idempotency, /value[^0-9]*0/i);
+    const execute = sql => command(["d1", "execute", "DESK_V2_DB", "--local",
+      "--persist-to", persistence, "--command", compact(sql)]);
+    const assertQuery = (sql, pattern) => assert.match(execute(sql), pattern);
+    const expectFailure = (sql, pattern) => {
+      const result = rawCommand(["d1", "execute", "DESK_V2_DB", "--local",
+        "--persist-to", persistence, "--command", compact(sql)]);
+      assert.notEqual(result.status, 0, `SQL unexpectedly succeeded: ${sql}`);
+      assert.match(`${result.stdout}\n${result.stderr}`, pattern);
+    };
+
+    execute(`INSERT INTO containers
+      (container_id,parent_id,name,status,focus,owner,next_action,lifecycle_state,version,
+        created_at,updated_at,archived_at)
+      VALUES
+      ('LEGACY-ROOT',NULL,'Legacy Root','IN_PROGRESS','Focus','Max','Next','ACTIVE',3,
+        '2026-02-01T10:00:00.000Z','2026-02-02T10:00:00.000Z',NULL),
+      ('LEGACY-A','LEGACY-ROOT','Same Name','OPEN',NULL,NULL,NULL,'ACTIVE',1,
+        '2026-02-03T10:00:00.000Z','2026-02-03T10:00:00.000Z',NULL),
+      ('LEGACY-B','LEGACY-ROOT','Same Name','OPEN',NULL,NULL,NULL,'ACTIVE',1,
+        '2026-02-04T10:00:00.000Z','2026-02-04T10:00:00.000Z',NULL);`);
+    execute(`INSERT INTO tasks
+      (task_id,container_id,title,description,status,priority,assignee,due_date,
+        lifecycle_state,version,created_at,updated_at,completed_at,archived_at)
+      VALUES ('LEGACY-TASK','LEGACY-A','Legacy Task','Description','OPEN','HIGH','Max',
+        '2026-10-20','ACTIVE',4,'2026-02-05T10:00:00.000Z',
+        '2026-02-06T10:00:00.000Z',NULL,NULL);`);
+
+    command(["d1", "execute", "DESK_V2_DB", "--local", "--persist-to",
+      persistence, "--file", path.join(root, "migrations",
+        "0004_hierarchy_schema_preparation.sql")]);
+
+    assertQuery(`SELECT COUNT(*) AS value FROM pragma_table_info('containers')
+      WHERE name IN ('name_key','role') AND "notnull"=0 AND dflt_value IS NULL;`,
+    /value[^0-9]*2/i);
+    assertQuery("SELECT COUNT(*) AS value FROM desk_hierarchy;", /value[^0-9]*0/i);
+    assertQuery(`SELECT COUNT(*) AS value FROM pragma_foreign_key_list('desk_hierarchy')
+      WHERE "table"='containers' AND "from"='root_container_id'
+        AND "to"='container_id' AND on_update='RESTRICT' AND on_delete='RESTRICT';`,
+    /value[^0-9]*1/i);
+    assertQuery(`SELECT COUNT(*) AS value FROM containers
+      WHERE container_id='LEGACY-ROOT' AND parent_id IS NULL AND name='Legacy Root'
+        AND status='IN_PROGRESS' AND focus='Focus' AND owner='Max' AND next_action='Next'
+        AND lifecycle_state='ACTIVE' AND version=3
+        AND created_at='2026-02-01T10:00:00.000Z'
+        AND updated_at='2026-02-02T10:00:00.000Z' AND archived_at IS NULL
+        AND name_key IS NULL AND role IS NULL;`, /value[^0-9]*1/i);
+    assertQuery(`SELECT COUNT(*) AS value FROM tasks
+      WHERE task_id='LEGACY-TASK' AND container_id='LEGACY-A' AND title='Legacy Task'
+        AND description='Description' AND status='OPEN' AND priority='HIGH'
+        AND assignee='Max' AND due_date='2026-10-20' AND lifecycle_state='ACTIVE'
+        AND version=4 AND created_at='2026-02-05T10:00:00.000Z'
+        AND updated_at='2026-02-06T10:00:00.000Z'
+        AND completed_at IS NULL AND archived_at IS NULL;`, /value[^0-9]*1/i);
+    assertQuery(`SELECT COUNT(*) AS value FROM pragma_index_list('containers') AS indexes
+      JOIN pragma_index_info(indexes.name) AS columns ON 1=1
+      WHERE columns.name='name_key' AND indexes."unique"=1;`, /value[^0-9]*0/i);
+    execute("UPDATE containers SET name_key='same name' WHERE container_id IN ('LEGACY-A','LEGACY-B');");
+    assertQuery("SELECT COUNT(*) AS value FROM containers WHERE name_key='same name';",
+      /value[^0-9]*2/i);
+
+    expectFailure(`INSERT INTO desk_hierarchy
+      (singleton_id,root_container_id,hierarchy_revision,timezone,normalization_version)
+      VALUES (2,'LEGACY-ROOT',1,'Europe/Rome',1);`, /CHECK constraint/i);
+    expectFailure(`INSERT INTO desk_hierarchy
+      (singleton_id,root_container_id,hierarchy_revision,timezone,normalization_version)
+      VALUES (1,'MISSING',1,'Europe\/Rome',1);`, /FOREIGN KEY constraint/i);
+    execute(`INSERT INTO desk_hierarchy
+      (singleton_id,root_container_id,hierarchy_revision,timezone,normalization_version)
+      VALUES (1,'LEGACY-ROOT',1,'Europe/Rome',1);`);
+    expectFailure(`INSERT INTO desk_hierarchy
+      (singleton_id,root_container_id,hierarchy_revision,timezone,normalization_version)
+      VALUES (1,'LEGACY-ROOT',1,'Europe/Rome',1);`, /UNIQUE constraint/i);
   } finally {
     fs.rmSync(persistence, { recursive: true, force: true });
   }

@@ -29,6 +29,23 @@ npm test
 Tutti i comandi D1 usati dalla suite includono `--local` e una directory
 temporanea `--persist-to`. Nessun dato reale V1 deve essere usato come fixture.
 
+## Preparazione gerarchica (migration 0004)
+
+La migration additiva `0004_hierarchy_schema_preparation.sql` aggiunge le
+colonne nullable `containers.name_key` e `containers.role` e prepara la tabella
+singleton vuota `desk_hierarchy`. Non crea root o aree, non esegue backfill e
+non applica ancora l'unicità dei nomi tra fratelli.
+
+La normalizzazione futura di `name_key`, in versione iniziale `1`, segue questo
+contratto: trim, Unicode NFKC, sostituzione di ogni sequenza di whitespace
+Unicode con un singolo spazio, Unicode case folding indipendente dalla locale e
+rifiuto del risultato vuoto. `lower(trim(name))` di SQLite non è un sostituto
+valido del case folding Unicode completo.
+
+`DESK_REQUIRED_MIGRATION` resta intenzionalmente `0001_foundation.sql`: nella
+semantica runtime corrente rappresenta la migration foundation minima richiesta
+dalla readiness, non l'ultima migration applicata.
+
 ## Non incluso
 
 Actions, OpenAPI V2, Container/Task service operativo, Timeline,
