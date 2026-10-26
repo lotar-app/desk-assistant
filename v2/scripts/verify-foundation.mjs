@@ -16,12 +16,17 @@ try {
     FROM sqlite_master
     WHERE type = 'table'
       AND name IN ('system_metadata', 'containers', 'tasks', 'd1_migrations',
-        'mcp_capability_test', 'mcp_idempotency', 'desk_hierarchy');
+        'mcp_capability_test', 'mcp_idempotency', 'desk_hierarchy',
+        'timeline_events', 'project_activities', 'project_activity_aliases',
+        'project_activity_items', 'project_activity_item_revisions');
   `);
-  assert.match(schema, /(?:"count"\s*:\s*7|count[^0-9]*7)/i);
+  assert.match(schema, /(?:"count"\s*:\s*12|count[^0-9]*12)/i);
   assert.match(execute(`SELECT count(*) AS count FROM d1_migrations
-    WHERE name = '0004_hierarchy_schema_preparation.sql';`),
-  /(?:"count"\s*:\s*1|count[^0-9]*1)/i);
+    WHERE name IN ('0001_foundation.sql', '0002_mcp_capability_test.sql',
+      '0003_container_create_idempotency.sql',
+      '0004_hierarchy_schema_preparation.sql',
+      '0005_timeline_task_completion.sql', '0006_project_activity.sql');`),
+  /(?:"count"\s*:\s*6|count[^0-9]*6)/i);
   assert.match(execute("PRAGMA foreign_keys;"), /foreign_keys[^0-9]*1/i);
   console.log("DESK V2 FOUNDATION CHECK PASSED");
 } finally {

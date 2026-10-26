@@ -30,12 +30,14 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
     assertQuery("SELECT count(*) AS value FROM d1_migrations WHERE name = '0002_mcp_capability_test.sql';", /value[^0-9]*1/i);
     assertQuery("SELECT count(*) AS value FROM d1_migrations WHERE name = '0003_container_create_idempotency.sql';", /value[^0-9]*1/i);
     assertQuery("SELECT count(*) AS value FROM d1_migrations WHERE name = '0004_hierarchy_schema_preparation.sql';", /value[^0-9]*1/i);
+    assertQuery("SELECT count(*) AS value FROM d1_migrations WHERE name = '0005_timeline_task_completion.sql';", /value[^0-9]*1/i);
+    assertQuery("SELECT count(*) AS value FROM d1_migrations WHERE name = '0006_project_activity.sql';", /value[^0-9]*1/i);
     assertQuery("SELECT value FROM system_metadata WHERE key = 'system_name';", /desk-v2/i);
     assertQuery("SELECT value FROM system_metadata WHERE key = 'environment';", /v2-development/i);
     assertQuery("PRAGMA foreign_keys;", /foreign_keys[^0-9]*1/i);
     assertQuery(`SELECT count(*) AS value FROM sqlite_master WHERE type = 'table'
       AND name IN ('system_metadata','containers','tasks','d1_migrations','mcp_capability_test',
-        'mcp_idempotency','desk_hierarchy');`, /value[^0-9]*7/i);
+        'mcp_idempotency','desk_hierarchy','timeline_events');`, /value[^0-9]*8/i);
     assertQuery("SELECT count(*) AS value FROM desk_hierarchy;", /value[^0-9]*0/i);
     assertQuery("SELECT count(*) AS value FROM mcp_capability_test;", /value[^0-9]*0/i);
 
@@ -125,7 +127,7 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
     });
     try {
       const tools = await client.listTools();
-      assert.equal(tools.tools.length, 12);
+      assert.equal(tools.tools.length, 19);
       assert.ok(tools.tools.some(tool => tool.name === "desk_v2_get_containers"));
       assert.ok(tools.tools.some(tool => tool.name === "desk_v2_create_container"));
       assert.ok(tools.tools.some(tool => tool.name === "desk_v2_move_container"));
@@ -891,7 +893,7 @@ test("task read foundation usa Worker e transport MCP isolati", async () => {
     });
 
     const listed = await client.listTools();
-    assert.equal(listed.tools.length, 12);
+    assert.equal(listed.tools.length, 19);
     const taskTool = listed.tools.find(tool => tool.name === "desk_v2_get_tasks");
     assert.ok(taskTool);
     assert.deepEqual(taskTool.annotations, {
@@ -1048,7 +1050,7 @@ test("task create foundation usa Worker e transport MCP isolati", async () => {
     });
 
     const listed = await client.listTools();
-    assert.equal(listed.tools.length, 12);
+    assert.equal(listed.tools.length, 19);
     const createTool = listed.tools.find(tool => tool.name === "desk_v2_create_task");
     assert.ok(createTool);
     assert.deepEqual(createTool.annotations, {
@@ -1261,7 +1263,7 @@ test("task update foundation usa Worker e transport MCP isolati", async () => {
     });
 
     const listed = await client.listTools();
-    assert.equal(listed.tools.length, 12);
+    assert.equal(listed.tools.length, 19);
     const updateTool = listed.tools.find(tool => tool.name === "desk_v2_update_task");
     assert.deepEqual(updateTool.annotations, { readOnlyHint: false, destructiveHint: false,
       idempotentHint: true, openWorldHint: false });
@@ -1427,7 +1429,7 @@ test("task update foundation usa Worker e transport MCP isolati", async () => {
   }
 });
 
-test("migration chain 0001-0004 prepara la gerarchia senza alterare dati legacy", () => {
+test("migration chain 0001-0006 prepara gerarchia, Timeline e ProjectActivity", () => {
   const persistence = fs.mkdtempSync(path.join(os.tmpdir(), "desk-v2-staged-"));
   try {
     command(["d1", "execute", "DESK_V2_DB", "--local", "--persist-to",
@@ -1466,6 +1468,12 @@ test("migration chain 0001-0004 prepara la gerarchia senza alterare dati legacy"
     command(["d1", "execute", "DESK_V2_DB", "--local", "--persist-to",
       persistence, "--file", path.join(root, "migrations",
         "0004_hierarchy_schema_preparation.sql")]);
+    command(["d1", "execute", "DESK_V2_DB", "--local", "--persist-to",
+      persistence, "--file", path.join(root, "migrations",
+        "0005_timeline_task_completion.sql")]);
+    command(["d1", "execute", "DESK_V2_DB", "--local", "--persist-to",
+      persistence, "--file", path.join(root, "migrations",
+        "0006_project_activity.sql")]);
 
     assertQuery(`SELECT COUNT(*) AS value FROM pragma_table_info('containers')
       WHERE name IN ('name_key','role') AND "notnull"=0 AND dflt_value IS NULL;`,
@@ -1508,6 +1516,24 @@ test("migration chain 0001-0004 prepara la gerarchia senza alterare dati legacy"
     expectFailure(`INSERT INTO desk_hierarchy
       (singleton_id,root_container_id,hierarchy_revision,timezone,normalization_version)
       VALUES (1,'LEGACY-ROOT',1,'Europe/Rome',1);`, /UNIQUE constraint/i);
+    execute(`INSERT INTO mcp_idempotency
+      (operation,idempotency_key,request_hash,attempt_id,resource_type,resource_id,
+       response_json,completed_at)
+      VALUES ('desk_v2_set_task_completion','timeline-migration-test',
+        '${"a".repeat(64)}','timeline-attempt','task','LEGACY-TASK','{}',
+        '2026-10-26T10:00:00.000Z');`);
+    execute(`INSERT INTO timeline_events
+      (event_id,container_id,task_id,event_type,description,origin,occurred_at,
+       idempotency_operation,idempotency_key)
+      VALUES ('EVT-MIGRATION','LEGACY-A','LEGACY-TASK','TASK_COMPLETED',
+        'Legacy Task completed.','desk_v2_set_task_completion',
+        '2026-10-26T10:00:00.000Z','desk_v2_set_task_completion',
+        'timeline-migration-test');`);
+    assertQuery("SELECT COUNT(*) AS value FROM timeline_events;", /value[^0-9]*1/i);
+    expectFailure("UPDATE timeline_events SET description='Changed' WHERE event_id='EVT-MIGRATION';",
+      /TIMELINE_APPEND_ONLY/i);
+    expectFailure("DELETE FROM timeline_events WHERE event_id='EVT-MIGRATION';",
+      /TIMELINE_APPEND_ONLY/i);
   } finally {
     fs.rmSync(persistence, { recursive: true, force: true });
   }

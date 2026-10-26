@@ -6,7 +6,6 @@ import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/cli
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const endpoint = new URL("https://desk-v2-foundation-dev.fastmax.workers.dev/mcp");
-const marker = "CODEX-REMOTE-CAPABILITY-20260924";
 const token = readSecret("DESK_V2_MCP_BEARER_TOKEN");
 
 const probeBody = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
@@ -28,8 +27,25 @@ await client.connect(transport);
 try {
   const listed = await client.listTools();
   assert.deepEqual(listed.tools.map(tool => tool.name).sort(), [
+    "desk_v2_apply_project_update",
+    "desk_v2_archive_container",
     "desk_v2_capability_read",
-    "desk_v2_capability_write"
+    "desk_v2_capability_write",
+    "desk_v2_create_container",
+    "desk_v2_create_task",
+    "desk_v2_get_briefing",
+    "desk_v2_get_containers",
+    "desk_v2_get_project_activity",
+    "desk_v2_get_tasks",
+    "desk_v2_get_timeline",
+    "desk_v2_move_container",
+    "desk_v2_move_task",
+    "desk_v2_resolve_reference",
+    "desk_v2_restore_container",
+    "desk_v2_set_task_completion",
+    "desk_v2_update_container",
+    "desk_v2_update_project_activity",
+    "desk_v2_update_task"
   ]);
   const read = await client.callTool({ name: "desk_v2_capability_read", arguments: {} });
   assert.deepEqual(read.structuredContent, {
@@ -39,17 +55,11 @@ try {
     containerCount: 0,
     taskCount: 0
   });
-  const write = await client.callTool({
-    name: "desk_v2_capability_write",
-    arguments: { marker }
-  });
-  assert.equal(write.structuredContent.marker, marker);
   console.log(JSON.stringify({
     authentication: "PASS",
     handshake: "PASS",
     tools: listed.tools.map(tool => tool.name).sort(),
-    read: read.structuredContent,
-    write: write.structuredContent
+    read: read.structuredContent
   }, null, 2));
 } finally {
   await client.close();

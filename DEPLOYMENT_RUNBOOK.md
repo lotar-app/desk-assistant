@@ -106,6 +106,28 @@ Questa procedura è separata dal Worker legacy nella directory `worker/` e dalla
 pipeline Apps Script. Si applica esclusivamente al Worker MCP Desk V2 nella
 directory `v2/`.
 
+### Baseline candidata STEP 33J — non autorizza il rilascio
+
+La baseline seguente descrive esclusivamente la release candidate locale. Il
+suo inserimento nel runbook non autorizza commit, migrazioni D1 DEV, deploy,
+modifiche ai secret, collegamento ChatGPT o test mutativi. Ognuna di queste
+operazioni richiede la propria approvazione esplicita.
+
+La candidate registra **19 tool MCP**: **17 tool di prodotto** e i due tool
+diagnostici `desk_v2_capability_read` e `desk_v2_capability_write`. La catena
+schema candidata comprende esattamente le migrazioni `0001`–`0006` elencate
+più avanti. Prima del deploy restano bloccanti:
+
+- OAuth 2.1 conforme al contratto MCP/ChatGPT; il bearer statico è soltanto una
+  protezione tecnica corrente e non deve essere distribuito a ChatGPT;
+- applicazione separatamente autorizzata di `0005` e `0006` al D1 DEV;
+- validazione della catena SQL, delle foreign key, dei trigger append-only e
+  dell'atomicità su D1/Miniflare, senza dedurla dai soli fake DB o SQLite;
+- aggiornamento di `/ready`, che attualmente verifica soltanto la migration
+  foundation minima e non certifica la baseline `0001`–`0006`;
+- completamento dei test di integrazione Wrangler/Miniflare e dei controlli
+  read-only post-deploy.
+
 ### Identità autorizzata
 
 Prima di qualsiasi deploy verificare in sola lettura:
@@ -176,6 +198,10 @@ Prima del deploy eseguire almeno:
 node --check src/index.mjs
 node --check src/mcp/server.mjs
 node --check src/mcp/task-repository.mjs
+node --check src/mcp/read-repository.mjs
+node --check src/mcp/task-completion-repository.mjs
+node --check src/mcp/project-update-repository.mjs
+node --check src/mcp/project-activity-repository.mjs
 npm run verify:isolation
 npm run test:unit
 node scripts/verify-foundation.mjs
@@ -225,7 +251,8 @@ Prima di qualsiasi test mutativo verificare:
 
 1. `GET /health` restituisce HTTP 200;
 2. `GET /ready` restituisce HTTP 200;
-3. la discovery MCP restituisce esattamente 12 tool:
+3. la discovery MCP restituisce esattamente 19 tool. I 17 tool di prodotto
+   sono:
    - `desk_v2_create_container`;
    - `desk_v2_move_container`;
    - `desk_v2_update_container`;
@@ -236,12 +263,27 @@ Prima di qualsiasi test mutativo verificare:
    - `desk_v2_get_tasks`;
    - `desk_v2_update_task`;
    - `desk_v2_move_task`;
+   - `desk_v2_resolve_reference`;
+   - `desk_v2_get_briefing`;
+   - `desk_v2_set_task_completion`;
+   - `desk_v2_get_timeline`;
+   - `desk_v2_apply_project_update`;
+   - `desk_v2_get_project_activity`;
+   - `desk_v2_update_project_activity`.
+
+   I due tool esclusivamente diagnostici, non da esporre come funzionalità di
+   prodotto, sono:
+
    - `desk_v2_capability_read`;
    - `desk_v2_capability_write`;
-4. `desk_v2_update_task` e `desk_v2_move_task` sono presenti;
-5. gli schemi di `desk_v2_update_task` e `desk_v2_move_task` sono strict e
-   corrispondono ai contratti approvati;
-6. le annotations di entrambi i tool sono:
+4. tutti i 19 schemi input/output sono validi; gli input dei tool di prodotto
+   sono strict secondo i rispettivi contratti;
+5. le annotations distinguono correttamente le letture dalle mutazioni. I tool
+   read-only sono `desk_v2_get_containers`, `desk_v2_get_tasks`,
+   `desk_v2_resolve_reference`, `desk_v2_get_briefing`,
+   `desk_v2_get_timeline`, `desk_v2_get_project_activity` e il diagnostico
+   `desk_v2_capability_read`;
+6. i tool mutativi idempotenti espongono:
 
    ```text
    readOnlyHint: false
@@ -250,18 +292,23 @@ Prima di qualsiasi test mutativo verificare:
    openWorldHint: false
    ```
 
-7. per questo rilascio la baseline autorizzata di D1 contiene esattamente le
-   migrazioni:
+7. la baseline **candidata e ancora soggetta ad approvazione** di D1 contiene
+   esattamente le migrazioni:
 
    ```text
    0001_foundation.sql
    0002_mcp_capability_test.sql
    0003_container_create_idempotency.sql
+   0004_hierarchy_schema_preparation.sql
+   0005_timeline_task_completion.sql
+   0006_project_activity.sql
    ```
 
-8. i conteggi reali di `containers`, `tasks`, `mcp_idempotency` e
-   `mcp_capability_test` sono stati osservati tramite query `SELECT` e
-   confrontati con la baseline pre-deploy.
+8. i conteggi reali di `containers`, `tasks`, `mcp_idempotency`,
+   `mcp_capability_test`, `timeline_events`, `project_activities`,
+   `project_activity_aliases`, `project_activity_items` e
+   `project_activity_item_revisions` sono osservati tramite query `SELECT` e
+   confrontati con la baseline pre-migrazione e pre-deploy.
 
 Migrazioni aggiuntive o mancanti bloccano questo rilascio, salvo una nuova
 approvazione esplicita. Questa condizione non costituisce un divieto permanente
@@ -269,6 +316,24 @@ di future migrazioni autorizzate.
 
 Le query di verifica devono essere esclusivamente read-only. Non eseguire
 migration, DDL, `INSERT`, `UPDATE` o `DELETE` durante questa fase.
+
+### Primo collaudo privato ChatGPT — sola lettura
+
+Il collaudo può iniziare soltanto dopo OAuth, migrazioni approvate, deploy e
+verifiche read-only del Worker. V1 resta autorevole e l'attuale Desk Assistant
+non viene modificato. Nel plugin privato abilitare inizialmente soltanto:
+
+- `desk_v2_get_containers`;
+- `desk_v2_get_tasks`;
+- `desk_v2_resolve_reference`;
+- `desk_v2_get_briefing`;
+- `desk_v2_get_timeline`;
+- `desk_v2_get_project_activity`.
+
+Disabilitare gli 11 tool mutativi e i due diagnostici. Verificare discovery,
+schemi, annotations, autenticazione e risposte read-only su dati V2 senza
+scritture. L'esito del collaudo non rende V2 autorevole e non autorizza
+l'abilitazione delle mutazioni.
 
 ### Test mutativi e cleanup
 
@@ -302,9 +367,13 @@ Fermarsi immediatamente senza ulteriori mutation se:
 - il dry-run non è PASS;
 - il Version ID o l’identità restituita dal deploy sono inattesi;
 - `/health` o `/ready` non restituiscono HTTP 200;
-- la discovery non contiene esattamente 12 tool;
+- la discovery non contiene esattamente 19 tool, distinti in 17 di prodotto e
+  due diagnostici;
 - `desk_v2_update_task`, `desk_v2_move_task`, i relativi schemi o annotations
   differiscono;
+- OAuth non è disponibile o non supera il collaudo previsto;
+- `/ready` non certifica la baseline schema candidata;
+- le migrazioni `0005` e `0006` non risultano applicate e validate sul D1 DEV;
 - migrazioni o conteggi D1 differiscono dalla baseline senza una spiegazione
   autorizzata;
 - un test modifica dati estranei;
