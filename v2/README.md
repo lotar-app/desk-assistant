@@ -33,7 +33,8 @@ temporanea `--persist-to`. Nessun dato reale V1 deve essere usato come fixture.
 
 Il codice locale registra 19 tool MCP: 17 tool di prodotto e i diagnostici
 `desk_v2_capability_read` e `desk_v2_capability_write`. Questa è una baseline
-candidata, non un'autorizzazione al rilascio. OAuth non è implementato, le
+candidata, non un'autorizzazione al rilascio. Il resource server OAuth è
+preparato soltanto localmente e non è stato configurato con un tenant Auth0, le
 migrazioni `0005` e `0006` non risultano applicate al D1 DEV, il Worker con
 questa baseline non risulta deployato e il collaudo ChatGPT non è stato
 eseguito.
@@ -43,6 +44,38 @@ sei tool read-only `desk_v2_get_containers`, `desk_v2_get_tasks`,
 `desk_v2_resolve_reference`, `desk_v2_get_briefing`,
 `desk_v2_get_timeline` e `desk_v2_get_project_activity`. Gli 11 tool mutativi e
 i due diagnostici resteranno disabilitati.
+
+## Profilo OAuth locale candidato
+
+La modalità predefinita resta il bearer statico di sviluppo. Impostando
+`DESK_V2_MCP_AUTH_MODE=oauth`, il Worker opera esclusivamente come OAuth
+resource server e usa il profilo `chatgpt-readonly` (l'unico profilo OAuth
+attualmente ammesso). Il profilo registra soltanto i sei tool read-only sopra:
+gli altri 13 non compaiono in `tools/list` e una loro chiamata viene rifiutata
+dal dispatcher MCP.
+
+La futura configurazione Auth0 richiede, senza salvare valori reali nel
+repository:
+
+- `DESK_V2_OAUTH_ISSUER`: issuer HTTPS esatto del tenant, incluso l'eventuale
+  slash finale pubblicato nella discovery OIDC e nel claim `iss`;
+- `DESK_V2_OAUTH_JWKS_URI`: endpoint JWKS HTTPS del tenant;
+- `DESK_V2_MCP_CANONICAL_URL`: URL HTTPS canonico della risorsa `/mcp`;
+- `DESK_V2_OAUTH_AUDIENCE`: API identifier Auth0, obbligatoriamente uguale
+  all'URL canonico;
+- `DESK_V2_MCP_PROFILE=chatgpt-readonly`.
+
+Il Worker pubblica `/.well-known/oauth-protected-resource` (e la variante
+path-aware `/.well-known/oauth-protected-resource/mcp`), richiede lo scope
+`desk.read` e verifica JWT `RS256` tramite JWKS: firma, `kid`, issuer, audience,
+`exp`, `nbf` e scope. Le risposte 401 includono una challenge
+`WWW-Authenticate` con `resource_metadata`. La discovery dei tool contiene sia
+`securitySchemes` sia il mirror `_meta.securitySchemes`; l'adapter è necessario
+perché la versione 2.0.0 dell'SDK installata conserva `_meta` ma non serializza
+il campo top-level.
+
+Questa preparazione non crea tenant o client Auth0, non rimuove il bearer
+statico, non prova il login ChatGPT e non autorizza deploy o collegamenti.
 
 ## Preparazione gerarchica (migration 0004)
 

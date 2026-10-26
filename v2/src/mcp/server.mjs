@@ -16,6 +16,7 @@ import {
   TaskCompletionRepository
 } from "./task-completion-repository.mjs";
 import { TaskDomainError, TaskRepository } from "./task-repository.mjs";
+import { configureToolProfile } from "./security-adapter.mjs";
 
 const markerSchema = z.string()
   .min(1)
@@ -438,8 +439,11 @@ const toolErrorSchema = z.object({
   }).strict()
 }).strict();
 
-export function createDeskMcpServer(env) {
-  const server = new McpServer({ name: "desk-v2-capability-test", version: "0.1.0" });
+export function createDeskMcpServer(env, options = {}) {
+  const server = configureToolProfile(
+    new McpServer({ name: "desk-v2-capability-test", version: "0.1.0" }),
+    options.profile
+  );
   const repository = new CapabilityRepository(env.DESK_V2_DB);
   const containerRepository = new ContainerRepository(env.DESK_V2_DB);
   const taskRepository = new TaskRepository(env.DESK_V2_DB);

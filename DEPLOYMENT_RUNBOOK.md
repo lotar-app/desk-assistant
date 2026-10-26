@@ -118,8 +118,9 @@ diagnostici `desk_v2_capability_read` e `desk_v2_capability_write`. La catena
 schema candidata comprende esattamente le migrazioni `0001`–`0006` elencate
 più avanti. Prima del deploy restano bloccanti:
 
-- OAuth 2.1 conforme al contratto MCP/ChatGPT; il bearer statico è soltanto una
-  protezione tecnica corrente e non deve essere distribuito a ChatGPT;
+- configurazione e collaudo reale del resource server OAuth candidato con
+  Auth0 e ChatGPT; l'implementazione locale non crea tenant o client e il
+  bearer statico resta soltanto una protezione di sviluppo da non distribuire;
 - applicazione separatamente autorizzata di `0005` e `0006` al D1 DEV;
 - validazione della catena SQL, delle foreign key, dei trigger append-only e
   dell'atomicità su D1/Miniflare, senza dedurla dai soli fake DB o SQLite;
@@ -319,9 +320,11 @@ migration, DDL, `INSERT`, `UPDATE` o `DELETE` durante questa fase.
 
 ### Primo collaudo privato ChatGPT — sola lettura
 
-Il collaudo può iniziare soltanto dopo OAuth, migrazioni approvate, deploy e
-verifiche read-only del Worker. V1 resta autorevole e l'attuale Desk Assistant
-non viene modificato. Nel plugin privato abilitare inizialmente soltanto:
+Il collaudo può iniziare soltanto dopo configurazione Auth0, verifica di
+protected-resource metadata, discovery OIDC, PKCE/resource/audience, migrazioni
+approvate, deploy e verifiche read-only del Worker. V1 resta autorevole e
+l'attuale Desk Assistant non viene modificato. Usare esclusivamente il profilo
+`chatgpt-readonly`, che registra soltanto:
 
 - `desk_v2_get_containers`;
 - `desk_v2_get_tasks`;
