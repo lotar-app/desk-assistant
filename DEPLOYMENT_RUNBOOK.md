@@ -106,28 +106,45 @@ Questa procedura è separata dal Worker legacy nella directory `worker/` e dalla
 pipeline Apps Script. Si applica esclusivamente al Worker MCP Desk V2 nella
 directory `v2/`.
 
-### Baseline candidata STEP 33J — non autorizza il rilascio
+### Release candidate OAuth/read-only — stato pre-deploy
 
-La baseline seguente descrive esclusivamente la release candidate locale. Il
-suo inserimento nel runbook non autorizza commit, migrazioni D1 DEV, deploy,
-modifiche ai secret, collegamento ChatGPT o test mutativi. Ognuna di queste
-operazioni richiede la propria approvazione esplicita.
+La release candidate configura il Worker DEV come OAuth resource server Auth0,
+con scope obbligatorio `desk.read` e profilo `chatgpt-readonly`. Il profilo
+remoto registra esclusivamente:
 
-La candidate registra **19 tool MCP**: **17 tool di prodotto** e i due tool
-diagnostici `desk_v2_capability_read` e `desk_v2_capability_write`. La catena
-schema candidata comprende esattamente le migrazioni `0001`–`0006` elencate
-più avanti. Prima del deploy restano bloccanti:
+- `desk_v2_get_containers`;
+- `desk_v2_get_tasks`;
+- `desk_v2_resolve_reference`;
+- `desk_v2_get_briefing`;
+- `desk_v2_get_timeline`;
+- `desk_v2_get_project_activity`.
 
-- configurazione e collaudo reale del resource server OAuth candidato con
-  Auth0 e ChatGPT; l'implementazione locale non crea tenant o client e il
-  bearer statico resta soltanto una protezione di sviluppo da non distribuire;
-- applicazione separatamente autorizzata di `0005` e `0006` al D1 DEV;
-- validazione della catena SQL, delle foreign key, dei trigger append-only e
-  dell'atomicità su D1/Miniflare, senza dedurla dai soli fake DB o SQLite;
-- aggiornamento di `/ready`, che attualmente verifica soltanto la migration
-  foundation minima e non certifica la baseline `0001`–`0006`;
-- completamento dei test di integrazione Wrangler/Miniflare e dei controlli
-  read-only post-deploy.
+Gli 11 tool mutativi e i due diagnostici non sono registrati nel profilo
+ChatGPT. I 19 tool completi restano utilizzati esclusivamente nei test
+foundation locali, avviati con override esplicito
+`DESK_V2_MCP_AUTH_MODE=static` e token casuale isolato.
+
+Sul D1 DEV risultano applicate e validate esattamente le migrazioni
+`0001`–`0006`. Sono presenti le cinque nuove tabelle introdotte da `0005` e
+`0006`; `PRAGMA foreign_key_check` non segnala violazioni e gli otto conteggi
+applicativi approvati sono pari a zero. La baseline applicativa comprende
+`containers`, `tasks`, `mcp_idempotency`, `timeline_events`,
+`project_activities`, `project_activity_aliases`, `project_activity_items` e
+`project_activity_item_revisions`; `mcp_capability_test` è esclusa da questa
+baseline applicativa. `/ready` verifica l'intera sequenza,
+le 12 tabelle essenziali, le colonne `containers.name_key` e `containers.role`,
+le foreign key e i metadata foundation; in caso positivo restituisce
+`schemaVersion: 0006_project_activity`.
+
+Il Worker remoto DEV non contiene ancora questa release. Restano bloccanti:
+
+- verifica reale di issuer, audience/resource, JWKS, scope `desk.read`, client
+  pubblico PKCE e callback ChatGPT su Auth0;
+- corrispondenza del commit autorizzato con `origin/main`, secondo i
+  prerequisiti Git seguenti;
+- esecuzione con esito PASS di `wrangler deploy --dry-run` sul checkout pulito;
+- autorizzazione esplicita al deploy;
+- verifiche OAuth/read-only post-deploy.
 
 ### Identità autorizzata
 
@@ -219,6 +236,23 @@ Verificare inoltre:
 - stato remoto iniziale tramite `/health`, `/ready`, discovery MCP e query SQL
   esclusivamente `SELECT`.
 
+La checklist pre-deploy deve inoltre confermare:
+
+- test unitari `112/112` PASS e test foundation `5/5` PASS;
+- migrazioni D1 remote esattamente `0001`–`0006`;
+- cinque nuove tabelle presenti, zero violazioni foreign key e otto conteggi
+  applicativi uguali alla baseline approvata;
+- issuer e JWKS Auth0 raggiungibili, audience uguale alla resource canonica
+  `/mcp` e scope `desk.read` configurato;
+- client Auth0 pubblico con Authorization Code e PKCE S256 e callback ChatGPT
+  esatta;
+- Version ID del Worker attualmente pubblicato registrato per un eventuale
+  rollback;
+- assenza di token, client secret o altre credenziali nel commit.
+
+Le verifiche Auth0 e il dry-run non si considerano superati finché non sono
+stati eseguiti e registrati sul checkout esatto autorizzato.
+
 Dopo `npm ci` e dopo le verifiche locali, prima del deploy:
 
 - eseguire `git status --short` nel checkout temporaneo;
@@ -243,100 +277,40 @@ Dalla directory `v2/` del checkout temporaneo eseguire esclusivamente:
 Non applicare migrazioni e non modificare binding, variabili o secret durante
 questa operazione.
 
-Registrare il Version ID restituito da Wrangler. Fermarsi se Wrangler non
+Prima del deploy registrare il Version ID attualmente pubblicato. Registrare
+poi il nuovo Version ID restituito da Wrangler. Fermarsi se Wrangler non
 restituisce un’identità di deploy coerente con `desk-v2-foundation-dev`.
 
-### Verifiche read-only post-deploy
+### Verifiche OAuth/read-only post-deploy
 
-Prima di qualsiasi test mutativo verificare:
+Il primo collaudo privato ChatGPT può iniziare soltanto dopo la verifica reale
+di Auth0, il deploy autorizzato e i controlli tecnici seguenti. V1 resta
+autorevole e l'attuale Desk Assistant non viene modificato.
 
-1. `GET /health` restituisce HTTP 200;
-2. `GET /ready` restituisce HTTP 200;
-3. la discovery MCP restituisce esattamente 19 tool. I 17 tool di prodotto
-   sono:
-   - `desk_v2_create_container`;
-   - `desk_v2_move_container`;
-   - `desk_v2_update_container`;
-   - `desk_v2_archive_container`;
-   - `desk_v2_restore_container`;
-   - `desk_v2_get_containers`;
-   - `desk_v2_create_task`;
-   - `desk_v2_get_tasks`;
-   - `desk_v2_update_task`;
-   - `desk_v2_move_task`;
-   - `desk_v2_resolve_reference`;
-   - `desk_v2_get_briefing`;
-   - `desk_v2_set_task_completion`;
-   - `desk_v2_get_timeline`;
-   - `desk_v2_apply_project_update`;
-   - `desk_v2_get_project_activity`;
-   - `desk_v2_update_project_activity`.
+1. `GET /health` restituisce HTTP 200 e `status: alive`.
+2. `GET /ready` restituisce HTTP 200 e
+   `schemaVersion: 0006_project_activity`.
+3. `/.well-known/oauth-protected-resource` e la variante path-aware
+   `/.well-known/oauth-protected-resource/mcp` dichiarano resource canonica,
+   authorization server previsto e scope `desk.read`.
+4. `/mcp` senza token e con token deliberatamente errato restituisce HTTP 401
+   con challenge `WWW-Authenticate` e `resource_metadata`.
+5. Token scaduti, non ancora validi, con firma, issuer, audience o scope errati
+   sono rifiutati con HTTP 401.
+6. Un JWT Auth0 RS256 valido completa `initialize` e `tools/list`.
+7. La discovery contiene esattamente i sei tool read-only elencati nella
+   sezione di stato pre-deploy; gli 11 tool mutativi e i due diagnostici sono
+   assenti.
+8. Schemi, annotations, `securitySchemes` e `_meta.securitySchemes` dei sei tool
+   sono validi e richiedono `desk.read`.
+9. Le sei letture rispondono sui dati V2 senza produrre scritture.
+10. Le migrazioni restano esattamente `0001`–`0006`,
+    `PRAGMA foreign_key_check` resta senza righe e gli otto conteggi applicativi
+    non cambiano rispetto alla baseline pre-deploy.
 
-   I due tool esclusivamente diagnostici, non da esporre come funzionalità di
-   prodotto, sono:
-
-   - `desk_v2_capability_read`;
-   - `desk_v2_capability_write`;
-4. tutti i 19 schemi input/output sono validi; gli input dei tool di prodotto
-   sono strict secondo i rispettivi contratti;
-5. le annotations distinguono correttamente le letture dalle mutazioni. I tool
-   read-only sono `desk_v2_get_containers`, `desk_v2_get_tasks`,
-   `desk_v2_resolve_reference`, `desk_v2_get_briefing`,
-   `desk_v2_get_timeline`, `desk_v2_get_project_activity` e il diagnostico
-   `desk_v2_capability_read`;
-6. i tool mutativi idempotenti espongono:
-
-   ```text
-   readOnlyHint: false
-   destructiveHint: false
-   idempotentHint: true
-   openWorldHint: false
-   ```
-
-7. la baseline **candidata e ancora soggetta ad approvazione** di D1 contiene
-   esattamente le migrazioni:
-
-   ```text
-   0001_foundation.sql
-   0002_mcp_capability_test.sql
-   0003_container_create_idempotency.sql
-   0004_hierarchy_schema_preparation.sql
-   0005_timeline_task_completion.sql
-   0006_project_activity.sql
-   ```
-
-8. i conteggi reali di `containers`, `tasks`, `mcp_idempotency`,
-   `mcp_capability_test`, `timeline_events`, `project_activities`,
-   `project_activity_aliases`, `project_activity_items` e
-   `project_activity_item_revisions` sono osservati tramite query `SELECT` e
-   confrontati con la baseline pre-migrazione e pre-deploy.
-
-Migrazioni aggiuntive o mancanti bloccano questo rilascio, salvo una nuova
-approvazione esplicita. Questa condizione non costituisce un divieto permanente
-di future migrazioni autorizzate.
-
-Le query di verifica devono essere esclusivamente read-only. Non eseguire
-migration, DDL, `INSERT`, `UPDATE` o `DELETE` durante questa fase.
-
-### Primo collaudo privato ChatGPT — sola lettura
-
-Il collaudo può iniziare soltanto dopo configurazione Auth0, verifica di
-protected-resource metadata, discovery OIDC, PKCE/resource/audience, migrazioni
-approvate, deploy e verifiche read-only del Worker. V1 resta autorevole e
-l'attuale Desk Assistant non viene modificato. Usare esclusivamente il profilo
-`chatgpt-readonly`, che registra soltanto:
-
-- `desk_v2_get_containers`;
-- `desk_v2_get_tasks`;
-- `desk_v2_resolve_reference`;
-- `desk_v2_get_briefing`;
-- `desk_v2_get_timeline`;
-- `desk_v2_get_project_activity`.
-
-Disabilitare gli 11 tool mutativi e i due diagnostici. Verificare discovery,
-schemi, annotations, autenticazione e risposte read-only su dati V2 senza
-scritture. L'esito del collaudo non rende V2 autorevole e non autorizza
-l'abilitazione delle mutazioni.
+Le verifiche D1 devono usare esclusivamente query `SELECT` e PRAGMA read-only.
+Non eseguire migration, DDL, `INSERT`, `UPDATE` o `DELETE`. L'esito del collaudo
+non rende V2 autorevole e non autorizza l'abilitazione delle mutazioni.
 
 ### Test mutativi e cleanup
 
@@ -370,20 +344,39 @@ Fermarsi immediatamente senza ulteriori mutation se:
 - il dry-run non è PASS;
 - il Version ID o l’identità restituita dal deploy sono inattesi;
 - `/health` o `/ready` non restituiscono HTTP 200;
-- la discovery non contiene esattamente 19 tool, distinti in 17 di prodotto e
-  due diagnostici;
-- `desk_v2_update_task`, `desk_v2_move_task`, i relativi schemi o annotations
-  differiscono;
+- i metadata OAuth, la challenge 401 o la discovery OIDC non coincidono con la
+  configurazione approvata;
+- un JWT valido non completa `initialize` oppure un token invalido è accettato;
+- la discovery non contiene esattamente i sei tool read-only approvati o espone
+  un tool mutativo o diagnostico;
 - OAuth non è disponibile o non supera il collaudo previsto;
-- `/ready` non certifica la baseline schema candidata;
-- le migrazioni `0005` e `0006` non risultano applicate e validate sul D1 DEV;
+- `/ready` non certifica `0001`–`0006` con
+  `schemaVersion: 0006_project_activity`;
 - migrazioni o conteggi D1 differiscono dalla baseline senza una spiegazione
   autorizzata;
+- `PRAGMA foreign_key_check` segnala una violazione;
+- una verifica read-only produce una scrittura;
 - un test modifica dati estranei;
 - il cleanup non ripristina esattamente lo stato iniziale.
 
 Non tentare automaticamente deploy alternativi, rollback, migrazioni o cleanup
 più ampi.
+
+### Rollback Worker
+
+Se health, readiness, OAuth o discovery falliscono, interrompere il collaudo.
+Soltanto dopo una nuova autorizzazione esplicita, ripristinare il Version ID
+Worker precedente registrato nel pre-deploy:
+
+```bash
+./node_modules/.bin/wrangler rollback "<PREVIOUS_VERSION_ID>"
+```
+
+Il rollback Worker non modifica D1. Le migrazioni `0001`–`0006` restano
+applicate e non devono essere rimosse né ripristinate tramite Time Travel per
+un problema limitato al Worker. Dopo il rollback verificare nuovamente
+`/health`, `/ready` e il comportamento della versione ripristinata. Non
+eseguire automaticamente il rollback e non pubblicare una versione alternativa.
 
 ### Rimozione del checkout temporaneo
 

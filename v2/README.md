@@ -1,8 +1,9 @@
-# Desk V2 — Foundation locale
+# Desk V2 — Release candidate OAuth/read-only
 
-Questa directory contiene esclusivamente la fondazione locale di Desk V2.
-Desk V1, Apps Script, Google Sheets, Actions e le risorse Cloudflare remote non
-fanno parte di questa fase.
+Questa directory contiene la fondazione Desk V2, i test locali e la
+configurazione della release candidate DEV OAuth/read-only. Desk V1, Apps
+Script, Google Sheets e Actions restano separati e non sono modificati da
+questa release.
 
 ## Confini della Fase 1
 
@@ -13,10 +14,11 @@ fanno parte di questa fase.
 - datastore locale: D1/Miniflare sotto una directory temporanea per ogni test
 - endpoint disponibili: `GET /health` e `GET /ready`
 
-La configurazione usa l'UUID del D1 remoto dedicato a Desk V2; nessuna migration
-remota è inclusa in questa fase. Non esiste uno script di deploy e il controllo
-di isolamento rifiuta riferimenti a Desk V1, binding remoti e dipendenze runtime
-esterne a `v2/`.
+La configurazione usa l'UUID del D1 remoto dedicato a Desk V2. Le migrazioni
+`0001`–`0006` risultano applicate e validate sul D1 DEV, ma il Worker remoto DEV
+non è stato ancora aggiornato con questa release. Non esiste uno script di
+deploy e il controllo di isolamento rifiuta riferimenti a Desk V1 e dipendenze
+runtime esterne a `v2/`.
 
 ## Comandi locali
 
@@ -29,33 +31,41 @@ npm test
 Tutti i comandi D1 usati dalla suite includono `--local` e una directory
 temporanea `--persist-to`. Nessun dato reale V1 deve essere usato come fixture.
 
-## Stato della release candidate STEP 33J
+## Stato pre-deploy della release candidate
 
-Il codice locale registra 19 tool MCP: 17 tool di prodotto e i diagnostici
-`desk_v2_capability_read` e `desk_v2_capability_write`. Questa è una baseline
-candidata, non un'autorizzazione al rilascio. Il resource server OAuth è
-preparato soltanto localmente e non è stato configurato con un tenant Auth0, le
-migrazioni `0005` e `0006` non risultano applicate al D1 DEV, il Worker con
-questa baseline non risulta deployato e il collaudo ChatGPT non è stato
-eseguito.
+Il Worker DEV è configurato come OAuth resource server Auth0 con scope
+`desk.read` e profilo `chatgpt-readonly`. Il profilo registra esclusivamente:
 
-Il primo collaudo ChatGPT dovrà mantenere V1 autorevole ed esporre soltanto i
-sei tool read-only `desk_v2_get_containers`, `desk_v2_get_tasks`,
-`desk_v2_resolve_reference`, `desk_v2_get_briefing`,
-`desk_v2_get_timeline` e `desk_v2_get_project_activity`. Gli 11 tool mutativi e
-i due diagnostici resteranno disabilitati.
+- `desk_v2_get_containers`;
+- `desk_v2_get_tasks`;
+- `desk_v2_resolve_reference`;
+- `desk_v2_get_briefing`;
+- `desk_v2_get_timeline`;
+- `desk_v2_get_project_activity`.
 
-## Profilo OAuth locale candidato
+Gli 11 tool mutativi e i due diagnostici restano disabilitati. I 19 tool
+completi sono utilizzati soltanto nei test foundation locali, che avviano
+Wrangler con override esplicito `DESK_V2_MCP_AUTH_MODE=static` e token casuale.
 
-La modalità predefinita resta il bearer statico di sviluppo. Impostando
-`DESK_V2_MCP_AUTH_MODE=oauth`, il Worker opera esclusivamente come OAuth
-resource server e usa il profilo `chatgpt-readonly` (l'unico profilo OAuth
-attualmente ammesso). Il profilo registra soltanto i sei tool read-only sopra:
-gli altri 13 non compaiono in `tools/list` e una loro chiamata viene rifiutata
-dal dispatcher MCP.
+Sul D1 DEV sono presenti le migrazioni `0001`–`0006` e le cinque nuove tabelle
+di Timeline e ProjectActivity. La verifica registrata riporta zero violazioni
+foreign key e otto conteggi applicativi pari a zero: `containers`, `tasks`,
+`mcp_idempotency`, `timeline_events`, `project_activities`,
+`project_activity_aliases`, `project_activity_items` e
+`project_activity_item_revisions`. `mcp_capability_test` è esclusa da questa
+baseline applicativa. Il Worker remoto DEV non è stato ancora distribuito con
+questa configurazione; verifica Auth0, dry-run e autorizzazione al deploy
+restano aperti.
 
-La futura configurazione Auth0 richiede, senza salvare valori reali nel
-repository:
+## Profilo OAuth DEV e autenticazione locale dei test
+
+La configurazione DEV imposta `DESK_V2_MCP_AUTH_MODE=oauth` e
+`DESK_V2_MCP_PROFILE=chatgpt-readonly`. Il Worker opera esclusivamente come
+OAuth resource server e gli altri 13 tool non compaiono in `tools/list`. Il
+bearer statico non è il default DEV: viene selezionato esplicitamente soltanto
+dai test foundation locali per esercitare in isolamento i 19 tool completi.
+
+La configurazione Auth0 richiede, senza salvare secret o token nel repository:
 
 - `DESK_V2_OAUTH_ISSUER`: issuer HTTPS esatto del tenant, incluso l'eventuale
   slash finale pubblicato nella discovery OIDC e nel claim `iss`;
@@ -74,8 +84,9 @@ path-aware `/.well-known/oauth-protected-resource/mcp`), richiede lo scope
 perché la versione 2.0.0 dell'SDK installata conserva `_meta` ma non serializza
 il campo top-level.
 
-Questa preparazione non crea tenant o client Auth0, non rimuove il bearer
-statico, non prova il login ChatGPT e non autorizza deploy o collegamenti.
+La presenza delle variabili non certifica la configurazione reale del tenant o
+del client Auth0, non prova il login ChatGPT e non autorizza deploy o
+collegamenti.
 
 ## Preparazione gerarchica (migration 0004)
 
@@ -90,9 +101,12 @@ Unicode con un singolo spazio, Unicode case folding indipendente dalla locale e
 rifiuto del risultato vuoto. `lower(trim(name))` di SQLite non è un sostituto
 valido del case folding Unicode completo.
 
-`DESK_REQUIRED_MIGRATION` resta intenzionalmente `0001_foundation.sql`: nella
-semantica runtime corrente rappresenta la migration foundation minima richiesta
-dalla readiness, non l'ultima migration applicata.
+`DESK_REQUIRED_MIGRATION` resta intenzionalmente `0001_foundation.sql` come
+guardia legacy dell'identità foundation dell'ambiente. Non limita `/ready`, che
+richiede la sequenza esatta `0001`–`0006`, le 12 tabelle essenziali, le colonne
+`containers.name_key` e `containers.role`, le foreign key e i metadata attesi.
+Quando tutti i controlli passano, `/ready` restituisce
+`schemaVersion: 0006_project_activity`.
 
 ## Timeline e completamento Task (migration 0005)
 
@@ -119,7 +133,7 @@ non legge o scrive ProjectActivity.
 
 ## ProjectActivity (migration 0006)
 
-La migration locale `0006_project_activity.sql` aggiunge snapshot versionati,
+La migration `0006_project_activity.sql` aggiunge snapshot versionati,
 alias esatti normalizzati secondo il contratto V1 approvato, item a stable key
 e revisioni immutabili. `desk_v2_get_project_activity` legge lo snapshot
 corrente in modalità `COMPACT`, `FULL` o `KEYS`; la risoluzione globale per
