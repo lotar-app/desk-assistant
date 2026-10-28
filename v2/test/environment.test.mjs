@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 import {
   EXPECTED_ENVIRONMENT,
   EXPECTED_MIGRATION,
+  EXPECTED_MIGRATIONS,
   EXPECTED_SCHEMA_FAMILY,
   EXPECTED_SYSTEM_NAME,
+  READY_SCHEMA_VERSION,
   validateEnvironment
 } from "../src/environment.mjs";
 
@@ -20,6 +22,18 @@ function validEnvironment() {
 
 test("accetta esclusivamente l'identità foundation V2 completa", () => {
   assert.deepEqual(validateEnvironment(validEnvironment()), { ok: true, errors: [] });
+});
+
+test("espone la baseline readiness completa e la sua versione", () => {
+  assert.deepEqual(EXPECTED_MIGRATIONS, [
+    "0001_foundation.sql",
+    "0002_mcp_capability_test.sql",
+    "0003_container_create_idempotency.sql",
+    "0004_hierarchy_schema_preparation.sql",
+    "0005_timeline_task_completion.sql",
+    "0006_project_activity.sql"
+  ]);
+  assert.equal(READY_SCHEMA_VERSION, "0006_project_activity");
 });
 
 for (const [field, code] of [

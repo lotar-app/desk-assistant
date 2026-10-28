@@ -2,6 +2,15 @@ export const EXPECTED_ENVIRONMENT = "v2-development";
 export const EXPECTED_SYSTEM_NAME = "desk-v2";
 export const EXPECTED_SCHEMA_FAMILY = "desk-v2-foundation";
 export const EXPECTED_MIGRATION = "0001_foundation.sql";
+export const EXPECTED_MIGRATIONS = Object.freeze([
+  "0001_foundation.sql",
+  "0002_mcp_capability_test.sql",
+  "0003_container_create_idempotency.sql",
+  "0004_hierarchy_schema_preparation.sql",
+  "0005_timeline_task_completion.sql",
+  "0006_project_activity.sql"
+]);
+export const READY_SCHEMA_VERSION = "0006_project_activity";
 
 export function validateEnvironment(env = {}) {
   const errors = [];

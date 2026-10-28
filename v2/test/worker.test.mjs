@@ -8,6 +8,32 @@ const metadata = {
   system_name: "desk-v2"
 };
 
+const migrations = [
+  "0001_foundation.sql",
+  "0002_mcp_capability_test.sql",
+  "0003_container_create_idempotency.sql",
+  "0004_hierarchy_schema_preparation.sql",
+  "0005_timeline_task_completion.sql",
+  "0006_project_activity.sql"
+];
+
+const tables = [
+  "containers",
+  "d1_migrations",
+  "desk_hierarchy",
+  "mcp_capability_test",
+  "mcp_idempotency",
+  "project_activities",
+  "project_activity_aliases",
+  "project_activity_item_revisions",
+  "project_activity_items",
+  "system_metadata",
+  "tasks",
+  "timeline_events"
+];
+
+const containerColumns = ["name_key", "role"];
+
 function db(options = {}) {
   return {
     prepare(sql) {
@@ -18,11 +44,14 @@ function db(options = {}) {
               .map(([key, value]) => ({ key, value })) };
           }
           if (/d1_migrations/.test(sql)) {
-            return { results: [{ name: options.migration || "0001_foundation.sql" }] };
+            return { results: (options.migrations || migrations).map(name => ({ name })) };
           }
           if (/sqlite_master/.test(sql)) {
-            return { results: (options.tables || ["containers", "d1_migrations",
-              "system_metadata", "tasks"]).map(name => ({ name })) };
+            return { results: (options.tables || tables).map(name => ({ name })) };
+          }
+          if (/PRAGMA table_info\(containers\)/.test(sql)) {
+            return { results: (options.containerColumns || containerColumns)
+              .map(name => ({ name })) };
           }
           if (/PRAGMA foreign_keys/.test(sql)) {
             return { results: [{ foreign_keys: options.foreignKeys ?? 1 }] };
@@ -56,22 +85,47 @@ test("GET /health è vivo e non richiede il database", async () => {
   });
 });
 
-test("GET /ready verifica identità, schema, migration e foreign key", async () => {
+test("GET /ready verifica identità, baseline completa, schema e foreign key", async () => {
   const response = await worker.fetch(request("/ready"), env());
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
     success: true, service: "desk-v2", environment: "v2-development",
-    status: "ready", schemaVersion: "0001_foundation"
+    status: "ready", schemaVersion: "0006_project_activity"
   });
 });
 
-for (const [name, runtime] of [
+const invalidReadinessCases = [
   ["binding mancante", env(undefined)],
   ["metadata errati", env(db({ metadata: { ...metadata, system_name: "wrong" } }))],
-  ["migration mancante", env(db({ migration: "other.sql" }))],
-  ["schema incompleto", env(db({ tables: ["system_metadata"] }))],
+  ["migrazione extra", env(db({ migrations: [...migrations, "0007_unexpected.sql"] }))],
+  ["migrazioni fuori ordine", env(db({
+    migrations: [migrations[1], migrations[0], ...migrations.slice(2)]
+  }))],
   ["foreign key disabilitate", env(db({ foreignKeys: 0 }))]
-]) {
+];
+
+for (const migration of migrations) {
+  invalidReadinessCases.push([
+    `migrazione mancante: ${migration}`,
+    env(db({ migrations: migrations.filter(name => name !== migration) }))
+  ]);
+}
+
+for (const table of tables) {
+  invalidReadinessCases.push([
+    `tabella mancante: ${table}`,
+    env(db({ tables: tables.filter(name => name !== table) }))
+  ]);
+}
+
+for (const column of containerColumns) {
+  invalidReadinessCases.push([
+    `colonna containers mancante: ${column}`,
+    env(db({ containerColumns: containerColumns.filter(name => name !== column) }))
+  ]);
+}
+
+for (const [name, runtime] of invalidReadinessCases) {
   test(`/ready fallisce chiuso: ${name}`, async () => {
     if (name === "binding mancante") delete runtime.DESK_V2_DB;
     const response = await worker.fetch(request("/ready"), runtime);

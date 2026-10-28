@@ -37,7 +37,11 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
     assertQuery("PRAGMA foreign_keys;", /foreign_keys[^0-9]*1/i);
     assertQuery(`SELECT count(*) AS value FROM sqlite_master WHERE type = 'table'
       AND name IN ('system_metadata','containers','tasks','d1_migrations','mcp_capability_test',
-        'mcp_idempotency','desk_hierarchy','timeline_events');`, /value[^0-9]*8/i);
+        'mcp_idempotency','desk_hierarchy','timeline_events','project_activities',
+        'project_activity_aliases','project_activity_items',
+        'project_activity_item_revisions');`, /value[^0-9]*12/i);
+    assertQuery(`SELECT count(*) AS value FROM pragma_table_info('containers')
+      WHERE name IN ('name_key','role');`, /value[^0-9]*2/i);
     assertQuery("SELECT count(*) AS value FROM desk_hierarchy;", /value[^0-9]*0/i);
     assertQuery("SELECT count(*) AS value FROM mcp_capability_test;", /value[^0-9]*0/i);
 
@@ -101,6 +105,7 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
 
     workerProcess = spawn(wrangler, ["dev", "--local", "--persist-to", persistence,
       "--port", String(port), "--ip", "127.0.0.1", "--var",
+      "DESK_V2_MCP_AUTH_MODE:static", "--var",
       `DESK_V2_MCP_BEARER_TOKEN:${token}`], {
       cwd: root,
       env: sanitizedEnvironment(),
@@ -115,7 +120,10 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
     });
     const ready = await fetch(`http://127.0.0.1:${port}/ready`);
     assert.equal(ready.status, 200);
-    assert.equal((await ready.json()).status, "ready");
+    assert.deepEqual(await ready.json(), {
+      success: true, service: "desk-v2", environment: "v2-development",
+      status: "ready", schemaVersion: "0006_project_activity"
+    });
     assert.equal((await fetch(`http://127.0.0.1:${port}/missing`)).status, 404);
     assert.equal((await fetch(`http://127.0.0.1:${port}/health`, { method: "POST" })).status, 405);
 
@@ -423,6 +431,7 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
 
       workerProcess = spawn(wrangler, ["dev", "--local", "--persist-to", persistence,
         "--port", String(port), "--ip", "127.0.0.1", "--var",
+        "DESK_V2_MCP_AUTH_MODE:static", "--var",
         `DESK_V2_MCP_BEARER_TOKEN:${token}`], {
         cwd: root,
         env: sanitizedEnvironment(),
@@ -635,6 +644,7 @@ test("foundation D1 locale e Worker locale rispettano tutti gli invarianti", asy
 
       workerProcess = spawn(wrangler, ["dev", "--local", "--persist-to", persistence,
         "--port", String(port), "--ip", "127.0.0.1", "--var",
+        "DESK_V2_MCP_AUTH_MODE:static", "--var",
         `DESK_V2_MCP_BEARER_TOKEN:${token}`], {
         cwd: root,
         env: sanitizedEnvironment(),
@@ -873,6 +883,7 @@ test("task read foundation usa Worker e transport MCP isolati", async () => {
 
     workerProcess = spawn(wrangler, ["dev", "--local", "--persist-to", persistence,
       "--port", String(port), "--ip", "127.0.0.1", "--var",
+      "DESK_V2_MCP_AUTH_MODE:static", "--var",
       `DESK_V2_MCP_BEARER_TOKEN:${token}`], {
       cwd: root,
       env: sanitizedEnvironment(),
@@ -1032,6 +1043,7 @@ test("task create foundation usa Worker e transport MCP isolati", async () => {
 
     workerProcess = spawn(wrangler, ["dev", "--local", "--persist-to", persistence,
       "--port", String(port), "--ip", "127.0.0.1", "--var",
+      "DESK_V2_MCP_AUTH_MODE:static", "--var",
       `DESK_V2_MCP_BEARER_TOKEN:${token}`], {
       cwd: root,
       env: sanitizedEnvironment(),
@@ -1249,6 +1261,7 @@ test("task update foundation usa Worker e transport MCP isolati", async () => {
 
     workerProcess = spawn(wrangler, ["dev", "--local", "--persist-to", persistence,
       "--port", String(port), "--ip", "127.0.0.1", "--var",
+      "DESK_V2_MCP_AUTH_MODE:static", "--var",
       `DESK_V2_MCP_BEARER_TOKEN:${token}`], {
       cwd: root, env: sanitizedEnvironment(), stdio: ["ignore", "pipe", "pipe"]
     });

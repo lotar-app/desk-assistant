@@ -1,9 +1,19 @@
 const EXPECTED_TABLES = Object.freeze([
   "containers",
   "d1_migrations",
+  "desk_hierarchy",
+  "mcp_capability_test",
+  "mcp_idempotency",
+  "project_activities",
+  "project_activity_aliases",
+  "project_activity_item_revisions",
+  "project_activity_items",
   "system_metadata",
-  "tasks"
+  "tasks",
+  "timeline_events"
 ]);
+
+const EXPECTED_CONTAINER_COLUMNS = Object.freeze(["name_key", "role"]);
 
 export class FoundationRepository {
   constructor(db) {
@@ -31,6 +41,11 @@ export class FoundationRepository {
     return (result.results || []).map(row => String(row.name));
   }
 
+  async readContainerColumns() {
+    const result = await this.db.prepare("PRAGMA table_info(containers)").all();
+    return (result.results || []).map(row => String(row.name));
+  }
+
   async foreignKeysEnabled() {
     const result = await this.db.prepare("PRAGMA foreign_keys").all();
     const row = (result.results || [])[0] || {};
@@ -39,5 +54,9 @@ export class FoundationRepository {
 
   expectedTablesPresent(tables) {
     return EXPECTED_TABLES.every(table => tables.includes(table));
+  }
+
+  expectedContainerColumnsPresent(columns) {
+    return EXPECTED_CONTAINER_COLUMNS.every(column => columns.includes(column));
   }
 }
