@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  EXPECTED_BUSINESS_WRITE_TOOLS,
   EXPECTED_READONLY_TOOLS,
   RemoteVerificationError,
   verifyRemoteMcp
@@ -47,9 +48,53 @@ test("accepts an OAuth challenge and discovers exactly six read-only tools", asy
     status: "PASS",
     anonymous: "PASS",
     authenticatedDiscovery: "PASS",
+    profile: "chatgpt-readonly",
     toolCount: 6
   });
   assert.deepEqual(client.calls, ["initialize", "tools/list", "close"]);
+});
+
+test("accepts business-write only with both scopes and exactly 17 domain tools", async () => {
+  const client = mockClient(EXPECTED_BUSINESS_WRITE_TOOLS);
+  const result = await verifyRemoteMcp({
+    endpoint,
+    profile: "chatgpt-business-write",
+    accessToken: "test-oauth-token",
+    fetchImpl: async (_url, init) => {
+      assert.equal(Object.hasOwn(init.headers, "authorization"), false);
+      return new Response("", {
+        status: 401,
+        headers: { "www-authenticate": oauthChallenge.replace(
+          'scope="desk.read"', 'scope="desk.read desk.write"'
+        ) }
+      });
+    },
+    createClient: () => client
+  });
+  assert.equal(result.profile, "chatgpt-business-write");
+  assert.equal(result.toolCount, 17);
+  assert.deepEqual(client.calls, ["initialize", "tools/list", "close"]);
+});
+
+test("business-write rejects either diagnostic tool", async () => {
+  for (const diagnostic of ["desk_v2_capability_read", "desk_v2_capability_write"]) {
+    const client = mockClient([...EXPECTED_BUSINESS_WRITE_TOOLS, diagnostic]);
+    await assert.rejects(
+      verifyRemoteMcp({
+        endpoint,
+        profile: "chatgpt-business-write",
+        accessToken: "test-oauth-token",
+        fetchImpl: async () => new Response("", {
+          status: 401,
+          headers: { "www-authenticate": oauthChallenge.replace(
+            'scope="desk.read"', 'scope="desk.read desk.write"'
+          ) }
+        }),
+        createClient: () => client
+      }),
+      errorWithCode("MCP_TOOL_ALLOWLIST_MISMATCH")
+    );
+  }
 });
 
 test("rejects an extra diagnostic or mutative tool", async () => {

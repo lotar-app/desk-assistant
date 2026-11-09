@@ -10,6 +10,7 @@ import {
   protectedResourceMetadata
 } from "./auth/oauth-resource-server.mjs";
 import {
+  CHATGPT_BUSINESS_WRITE_PROFILE,
   CHATGPT_READONLY_PROFILE,
   addToolSecuritySchemes
 } from "./mcp/security-adapter.mjs";
@@ -84,7 +85,7 @@ async function handleOAuthMcp(request, env, ctx, options) {
     return oauthUnauthorized(config, "invalid_token");
   }
   const profile = env.DESK_V2_MCP_PROFILE || CHATGPT_READONLY_PROFILE;
-  if (profile !== CHATGPT_READONLY_PROFILE) {
+  if (![CHATGPT_READONLY_PROFILE, CHATGPT_BUSINESS_WRITE_PROFILE].includes(profile)) {
     return json({ error: "MCP_PROFILE_INVALID" }, 503);
   }
   const handler = createMcpHandler(() => createDeskMcpServer(env, { profile }), {

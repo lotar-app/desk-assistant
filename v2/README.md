@@ -1,9 +1,9 @@
-# Desk V2 — Release candidate OAuth/read-only
+# Desk V2 — Profili OAuth ChatGPT
 
 Questa directory contiene la fondazione Desk V2, i test locali e la
-configurazione della release candidate DEV OAuth/read-only. Desk V1, Apps
-Script, Google Sheets e Actions restano separati e non sono modificati da
-questa release.
+configurazione locale della release candidate DEV OAuth/business-write. Desk
+V1, Apps Script, Google Sheets e Actions restano separati e non sono modificati
+da questa release.
 
 ## Confini della Fase 1
 
@@ -33,8 +33,9 @@ temporanea `--persist-to`. Nessun dato reale V1 deve essere usato come fixture.
 
 ## Stato pre-deploy della release candidate
 
-Il Worker DEV è configurato come OAuth resource server Auth0 con scope
-`desk.read` e profilo `chatgpt-readonly`. Il profilo registra esclusivamente:
+La configurazione locale del Worker DEV seleziona il profilo
+`chatgpt-business-write` come OAuth resource server Auth0 con scope globali
+`desk.read` e `desk.write`. Il profilo registra i sei tool read-only:
 
 - `desk_v2_get_containers`;
 - `desk_v2_get_tasks`;
@@ -43,8 +44,28 @@ Il Worker DEV è configurato come OAuth resource server Auth0 con scope
 - `desk_v2_get_timeline`;
 - `desk_v2_get_project_activity`.
 
-Gli 11 tool mutativi e i due diagnostici restano disabilitati. I 19 tool
-completi sono utilizzati soltanto nei test foundation locali, che avviano
+Il profilo espone inoltre gli undici tool mutativi:
+
+- `desk_v2_create_container`;
+- `desk_v2_move_container`;
+- `desk_v2_update_container`;
+- `desk_v2_archive_container`;
+- `desk_v2_restore_container`;
+- `desk_v2_create_task`;
+- `desk_v2_update_task`;
+- `desk_v2_move_task`;
+- `desk_v2_set_task_completion`;
+- `desk_v2_apply_project_update`;
+- `desk_v2_update_project_activity`.
+
+I tool diagnostici `desk_v2_capability_read` e
+`desk_v2_capability_write` sono sempre esclusi da entrambi i profili ChatGPT.
+I tool mutativi conservano i contratti applicativi esistenti: chiavi di
+idempotenza, optimistic concurrency tramite `expectedVersion`, transizioni di
+archiviazione/ripristino e scritture atomiche di Timeline e ProjectActivity.
+Il profilo `chatgpt-readonly` resta disponibile nel codice come alternativa di
+ripristino: espone soltanto i sei tool read-only e richiede `desk.read`. I 19
+tool completi sono utilizzati soltanto nei test foundation locali, che avviano
 Wrangler con override esplicito `DESK_V2_MCP_AUTH_MODE=static` e token casuale.
 
 Sul D1 DEV sono presenti le migrazioni `0001`–`0006` e le cinque nuove tabelle
@@ -59,11 +80,14 @@ restano aperti.
 
 ## Profilo OAuth DEV e autenticazione locale dei test
 
-La configurazione DEV imposta `DESK_V2_MCP_AUTH_MODE=oauth` e
-`DESK_V2_MCP_PROFILE=chatgpt-readonly`. Il Worker opera esclusivamente come
-OAuth resource server e gli altri 13 tool non compaiono in `tools/list`. Il
+La configurazione locale DEV imposta `DESK_V2_MCP_AUTH_MODE=oauth` e
+`DESK_V2_MCP_PROFILE=chatgpt-business-write`. Quando questa configurazione sarà
+distribuita, il Worker opererà come OAuth resource server ed esporrà esattamente
+17 tool di dominio; i due diagnostici non compariranno in `tools/list`. Il
 bearer statico non è il default DEV: viene selezionato esplicitamente soltanto
-dai test foundation locali per esercitare in isolamento i 19 tool completi.
+dai test foundation locali per esercitare in isolamento i 19 tool completi. Il
+deployment Cloudflare effettivo non è modificato dalla sola configurazione
+locale e non contiene ancora questa release business-write.
 
 La configurazione Auth0 richiede, senza salvare secret o token nel repository:
 
@@ -73,20 +97,26 @@ La configurazione Auth0 richiede, senza salvare secret o token nel repository:
 - `DESK_V2_MCP_CANONICAL_URL`: URL HTTPS canonico della risorsa `/mcp`;
 - `DESK_V2_OAUTH_AUDIENCE`: API identifier Auth0, obbligatoriamente uguale
   all'URL canonico;
-- `DESK_V2_MCP_PROFILE=chatgpt-readonly`.
+- `DESK_V2_MCP_PROFILE=chatgpt-business-write`.
 
 Il Worker pubblica `/.well-known/oauth-protected-resource` (e la variante
-path-aware `/.well-known/oauth-protected-resource/mcp`), richiede lo scope
-`desk.read` e verifica JWT `RS256` tramite JWKS: firma, `kid`, issuer, audience,
-`exp`, `nbf` e scope. Le risposte 401 includono una challenge
-`WWW-Authenticate` con `resource_metadata`. La discovery dei tool contiene sia
-`securitySchemes` sia il mirror `_meta.securitySchemes`; l'adapter è necessario
-perché la versione 2.0.0 dell'SDK installata conserva `_meta` ma non serializza
-il campo top-level.
+path-aware `/.well-known/oauth-protected-resource/mcp`). Con il profilo locale
+business-write richiede entrambi gli scope globali `desk.read` e `desk.write` e
+verifica JWT `RS256` tramite JWKS: firma, `kid`, issuer, audience, `exp`, `nbf`
+e scope. Le risposte 401 includono una challenge `WWW-Authenticate` con
+`resource_metadata`. La discovery dei tool contiene sia `securitySchemes` sia
+il mirror `_meta.securitySchemes`; l'adapter è necessario perché la versione
+2.0.0 dell'SDK installata conserva `_meta` ma non serializza il campo top-level.
 
 La presenza delle variabili non certifica la configurazione reale del tenant o
 del client Auth0, non prova il login ChatGPT e non autorizza deploy o
 collegamenti.
+
+Il verificatore remoto accetta anche l'opzione programmatica
+`profile: "chatgpt-business-write"`: in tale modalità controlla la challenge
+con entrambi gli scope e l'allowlist esatta di 17 tool, senza invocare alcun
+tool. Senza opzione continua a verificare esclusivamente il profilo read-only
+distribuito.
 
 ## Preparazione gerarchica (migration 0004)
 

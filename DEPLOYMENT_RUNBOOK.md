@@ -106,11 +106,11 @@ Questa procedura è separata dal Worker legacy nella directory `worker/` e dalla
 pipeline Apps Script. Si applica esclusivamente al Worker MCP Desk V2 nella
 directory `v2/`.
 
-### Release candidate OAuth/read-only — stato pre-deploy
+### Release candidate OAuth/business-write — stato pre-deploy
 
 La release candidate configura il Worker DEV come OAuth resource server Auth0,
-con scope obbligatorio `desk.read` e profilo `chatgpt-readonly`. Il profilo
-remoto registra esclusivamente:
+con scope globali obbligatori `desk.read` e `desk.write` e profilo
+`chatgpt-business-write`. Il profilo remoto registra i sei tool read-only:
 
 - `desk_v2_get_containers`;
 - `desk_v2_get_tasks`;
@@ -119,10 +119,29 @@ remoto registra esclusivamente:
 - `desk_v2_get_timeline`;
 - `desk_v2_get_project_activity`.
 
-Gli 11 tool mutativi e i due diagnostici non sono registrati nel profilo
-ChatGPT. I 19 tool completi restano utilizzati esclusivamente nei test
-foundation locali, avviati con override esplicito
-`DESK_V2_MCP_AUTH_MODE=static` e token casuale isolato.
+Registra inoltre gli 11 tool mutativi:
+
+- `desk_v2_create_container`;
+- `desk_v2_move_container`;
+- `desk_v2_update_container`;
+- `desk_v2_archive_container`;
+- `desk_v2_restore_container`;
+- `desk_v2_create_task`;
+- `desk_v2_update_task`;
+- `desk_v2_move_task`;
+- `desk_v2_set_task_completion`;
+- `desk_v2_apply_project_update`;
+- `desk_v2_update_project_activity`.
+
+I due tool diagnostici `desk_v2_capability_read` e
+`desk_v2_capability_write` non sono registrati in alcun profilo ChatGPT. Gli
+scope sono applicati globalmente al profilo business-write: tutti i 17 tool
+richiedono entrambi `desk.read` e `desk.write`, inclusi i sei tool read-only.
+Il profilo `chatgpt-readonly` resta implementato nel codice come possibilità di
+ripristino e continua a esporre soltanto i sei tool read-only con `desk.read`.
+I 19 tool completi restano utilizzati esclusivamente nei test foundation
+locali, avviati con override esplicito `DESK_V2_MCP_AUTH_MODE=static` e token
+casuale isolato.
 
 Sul D1 DEV risultano applicate e validate esattamente le migrazioni
 `0001`–`0006`. Sono presenti le cinque nuove tabelle introdotte da `0005` e
@@ -138,13 +157,16 @@ le foreign key e i metadata foundation; in caso positivo restituisce
 
 Il Worker remoto DEV non contiene ancora questa release. Restano bloccanti:
 
-- verifica reale di issuer, audience/resource, JWKS, scope `desk.read`, client
-  pubblico PKCE e callback ChatGPT su Auth0;
+- verifica reale di issuer, audience/resource, JWKS, scope `desk.read` e
+  `desk.write`, client pubblico PKCE e callback ChatGPT su Auth0;
+- conferma che il connettore ChatGPT esistente possa richiedere entrambi gli
+  scope mantenendo lo stesso Client ID, con nuova autorizzazione o
+  riconnessione OAuth quando necessaria;
 - corrispondenza del commit autorizzato con `origin/main`, secondo i
   prerequisiti Git seguenti;
 - esecuzione con esito PASS di `wrangler deploy --dry-run` sul checkout pulito;
 - autorizzazione esplicita al deploy;
-- verifiche OAuth/read-only post-deploy.
+- verifiche OAuth/business-write post-deploy.
 
 ### Identità autorizzata
 
@@ -238,14 +260,17 @@ Verificare inoltre:
 
 La checklist pre-deploy deve inoltre confermare:
 
-- test unitari `112/112` PASS e test foundation `5/5` PASS;
+- tutti i test unitari previsti dalla release PASS e test foundation `5/5`
+  PASS;
 - migrazioni D1 remote esattamente `0001`–`0006`;
 - cinque nuove tabelle presenti, zero violazioni foreign key e otto conteggi
   applicativi uguali alla baseline approvata;
 - issuer e JWKS Auth0 raggiungibili, audience uguale alla resource canonica
-  `/mcp` e scope `desk.read` configurato;
+  `/mcp` e scope `desk.read` e `desk.write` configurati;
 - client Auth0 pubblico con Authorization Code e PKCE S256 e callback ChatGPT
   esatta;
+- Client ID invariato e riconnessione OAuth pianificata per ottenere un token
+  contenente entrambi gli scope globali;
 - Version ID del Worker attualmente pubblicato registrato per un eventuale
   rollback;
 - assenza di token, client secret o altre credenziali nel commit.
@@ -281,7 +306,7 @@ Prima del deploy registrare il Version ID attualmente pubblicato. Registrare
 poi il nuovo Version ID restituito da Wrangler. Fermarsi se Wrangler non
 restituisce un’identità di deploy coerente con `desk-v2-foundation-dev`.
 
-### Verifiche OAuth/read-only post-deploy
+### Verifiche OAuth/business-write post-deploy
 
 Il primo collaudo privato ChatGPT può iniziare soltanto dopo la verifica reale
 di Auth0, il deploy autorizzato e i controlli tecnici seguenti. V1 resta
@@ -292,19 +317,28 @@ autorevole e l'attuale Desk Assistant non viene modificato.
    `schemaVersion: 0006_project_activity`.
 3. `/.well-known/oauth-protected-resource` e la variante path-aware
    `/.well-known/oauth-protected-resource/mcp` dichiarano resource canonica,
-   authorization server previsto e scope `desk.read`.
+   authorization server previsto e scope globali `desk.read` e `desk.write`.
 4. `/mcp` senza token e con token deliberatamente errato restituisce HTTP 401
-   con challenge `WWW-Authenticate` e `resource_metadata`.
+   con challenge `WWW-Authenticate`, `resource_metadata` e richiesta di
+   entrambi gli scope.
 5. Token scaduti, non ancora validi, con firma, issuer, audience o scope errati
-   sono rifiutati con HTTP 401.
+   sono rifiutati con HTTP 401. Sono rifiutati anche token contenenti soltanto
+   `desk.read`, soltanto `desk.write` o nessuno dei due.
 6. Un JWT Auth0 RS256 valido completa `initialize` e `tools/list`.
-7. La discovery contiene esattamente i sei tool read-only elencati nella
-   sezione di stato pre-deploy; gli 11 tool mutativi e i due diagnostici sono
-   assenti.
-8. Schemi, annotations, `securitySchemes` e `_meta.securitySchemes` dei sei tool
-   sono validi e richiedono `desk.read`.
-9. Le sei letture rispondono sui dati V2 senza produrre scritture.
-10. Le migrazioni restano esattamente `0001`–`0006`,
+7. Se il connettore era già collegato con il solo `desk.read`, viene
+   riconnesso o riautorizzato senza cambiare Client ID e il nuovo token contiene
+   entrambi gli scope.
+8. La discovery contiene esattamente i 17 tool elencati nella sezione di stato
+   pre-deploy: sei read-only e 11 mutativi.
+9. `desk_v2_capability_read` e `desk_v2_capability_write` sono assenti.
+10. Schemi, annotations, `securitySchemes` e `_meta.securitySchemes` dei 17
+    tool sono validi e richiedono entrambi `desk.read` e `desk.write`.
+11. `desk_v2_archive_container` dichiara `destructiveHint: true`; tutti i tool
+    mutativi conservano idempotenza e version guard previste dai rispettivi
+    contratti.
+12. Le sei letture rispondono sui dati V2 senza produrre scritture. Nessun tool
+    mutativo viene invocato senza una seconda autorizzazione esplicita.
+13. Le migrazioni restano esattamente `0001`–`0006`,
     `PRAGMA foreign_key_check` resta senza righe e gli otto conteggi applicativi
     non cambiano rispetto alla baseline pre-deploy.
 
@@ -347,8 +381,11 @@ Fermarsi immediatamente senza ulteriori mutation se:
 - i metadata OAuth, la challenge 401 o la discovery OIDC non coincidono con la
   configurazione approvata;
 - un JWT valido non completa `initialize` oppure un token invalido è accettato;
-- la discovery non contiene esattamente i sei tool read-only approvati o espone
-  un tool mutativo o diagnostico;
+- un token privo di `desk.read` o `desk.write` viene accettato;
+- la riconnessione OAuth non produce un token con entrambi gli scope mantenendo
+  il Client ID approvato;
+- la discovery non contiene esattamente i 17 tool approvati, manca un tool
+  atteso o espone uno dei due tool diagnostici;
 - OAuth non è disponibile o non supera il collaudo previsto;
 - `/ready` non certifica `0001`–`0006` con
   `schemaVersion: 0006_project_activity`;
@@ -375,8 +412,15 @@ Worker precedente registrato nel pre-deploy:
 Il rollback Worker non modifica D1. Le migrazioni `0001`–`0006` restano
 applicate e non devono essere rimosse né ripristinate tramite Time Travel per
 un problema limitato al Worker. Dopo il rollback verificare nuovamente
-`/health`, `/ready` e il comportamento della versione ripristinata. Non
-eseguire automaticamente il rollback e non pubblicare una versione alternativa.
+`/health`, `/ready` e il comportamento della versione ripristinata. Il Version
+ID precedente deve corrispondere alla release verificata con profilo
+`chatgpt-readonly`: metadata e challenge tornano a richiedere soltanto
+`desk.read`, il vecchio connettore read-only completa nuovamente `initialize` e
+`tools/list`, e la discovery contiene esattamente i sei tool read-only senza
+gli 11 mutativi e senza i due diagnostici. Se il connettore non riutilizza il
+grant precedente, riconnetterlo richiedendo soltanto `desk.read`, senza cambiare
+Client ID. Non eseguire automaticamente il rollback e non pubblicare una
+versione alternativa.
 
 ### Rimozione del checkout temporaneo
 

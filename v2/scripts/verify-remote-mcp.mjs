@@ -10,6 +10,26 @@ export const EXPECTED_READONLY_TOOLS = Object.freeze([
   "desk_v2_get_timeline",
   "desk_v2_resolve_reference"
 ]);
+export const EXPECTED_MUTATIVE_TOOLS = Object.freeze([
+  "desk_v2_apply_project_update",
+  "desk_v2_archive_container",
+  "desk_v2_create_container",
+  "desk_v2_create_task",
+  "desk_v2_move_container",
+  "desk_v2_move_task",
+  "desk_v2_restore_container",
+  "desk_v2_set_task_completion",
+  "desk_v2_update_container",
+  "desk_v2_update_project_activity",
+  "desk_v2_update_task"
+]);
+export const EXPECTED_BUSINESS_WRITE_TOOLS = Object.freeze([
+  ...EXPECTED_READONLY_TOOLS,
+  ...EXPECTED_MUTATIVE_TOOLS
+]);
+
+const READONLY_PROFILE = "chatgpt-readonly";
+const BUSINESS_WRITE_PROFILE = "chatgpt-business-write";
 
 const DEFAULT_ENDPOINT = new URL("https://desk-v2-foundation-dev.fastmax.workers.dev/mcp");
 const TOKEN_ENVIRONMENT_VARIABLE = "DESK_V2_OAUTH_ACCESS_TOKEN";
@@ -42,13 +62,14 @@ export async function verifyRemoteMcp(options = {}) {
   const fetchImpl = options.fetchImpl || fetch;
   const timeoutMs = options.timeoutMs || DEFAULT_TIMEOUT_MS;
   const accessToken = options.accessToken ?? process.env[TOKEN_ENVIRONMENT_VARIABLE];
+  const profile = verificationProfile(options.profile || READONLY_PROFILE);
 
   const anonymous = await fetchWithTimeout(fetchImpl, endpoint, {
     method: "POST",
     headers: PROBE_HEADERS,
     body: PROBE_BODY
   }, timeoutMs);
-  verifyAnonymousChallenge(anonymous, endpoint);
+  verifyAnonymousChallenge(anonymous, endpoint, profile.scopes);
 
   if (!accessToken) {
     return {
@@ -66,7 +87,7 @@ export async function verifyRemoteMcp(options = {}) {
       "MCP_INITIALIZE_FAILED", "MCP_INITIALIZE_TIMEOUT");
     const listed = await stage(() => client.listTools(), timeoutMs,
       "MCP_TOOLS_LIST_FAILED", "MCP_TOOLS_LIST_TIMEOUT");
-    verifyExactToolAllowlist(listed);
+    verifyExactToolAllowlist(listed, profile.tools);
   } finally {
     if (client) {
       await closeQuietly(client, timeoutMs);
@@ -77,11 +98,12 @@ export async function verifyRemoteMcp(options = {}) {
     status: "PASS",
     anonymous: "PASS",
     authenticatedDiscovery: "PASS",
-    toolCount: EXPECTED_READONLY_TOOLS.length
+    profile: profile.name,
+    toolCount: profile.tools.length
   };
 }
 
-export function verifyAnonymousChallenge(response, endpoint) {
+export function verifyAnonymousChallenge(response, endpoint, scopes = ["desk.read"]) {
   if (response.status !== 401) {
     throw new RemoteVerificationError("ANONYMOUS_STATUS_NOT_401");
   }
@@ -90,23 +112,37 @@ export function verifyAnonymousChallenge(response, endpoint) {
   const resourceMetadata = `${endpoint.origin}/.well-known/oauth-protected-resource`;
   if (!/^Bearer(?:\s|$)/i.test(challenge)
       || !challenge.includes(`resource_metadata="${resourceMetadata}"`)
-      || !challenge.includes('scope="desk.read"')) {
+      || !challenge.includes(`scope="${scopes.join(" ")}"`)) {
     throw new RemoteVerificationError("OAUTH_CHALLENGE_INVALID");
   }
 }
 
-export function verifyExactToolAllowlist(listed) {
+export function verifyExactToolAllowlist(listed, expectedTools = EXPECTED_READONLY_TOOLS) {
   if (!listed || !Array.isArray(listed.tools)
       || listed.tools.some(tool => !tool || typeof tool.name !== "string")) {
     throw new RemoteVerificationError("MCP_TOOLS_RESPONSE_MALFORMED");
   }
 
   const actual = listed.tools.map(tool => tool.name).sort();
-  const expected = [...EXPECTED_READONLY_TOOLS].sort();
+  const expected = [...expectedTools].sort();
   if (actual.length !== expected.length
       || actual.some((name, index) => name !== expected[index])) {
     throw new RemoteVerificationError("MCP_TOOL_ALLOWLIST_MISMATCH");
   }
+}
+
+function verificationProfile(name) {
+  if (name === READONLY_PROFILE) {
+    return { name, scopes: ["desk.read"], tools: EXPECTED_READONLY_TOOLS };
+  }
+  if (name === BUSINESS_WRITE_PROFILE) {
+    return {
+      name,
+      scopes: ["desk.read", "desk.write"],
+      tools: EXPECTED_BUSINESS_WRITE_TOOLS
+    };
+  }
+  throw new RemoteVerificationError("MCP_PROFILE_INVALID");
 }
 
 function createAuthenticatedClient({ endpoint, accessToken }) {
@@ -171,7 +207,7 @@ async function main() {
       process.exitCode = 2;
       return;
     }
-    console.log(`DESK V2 REMOTE OAUTH CHECK PASS: ${result.toolCount} read-only tools`);
+    console.log(`DESK V2 REMOTE OAUTH CHECK PASS: ${result.toolCount} tools (${result.profile})`);
   } catch (error) {
     const code = error instanceof RemoteVerificationError
       ? error.code

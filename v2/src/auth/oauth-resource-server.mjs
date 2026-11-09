@@ -1,4 +1,5 @@
-const REQUIRED_SCOPE = "desk.read";
+import { profileConfiguration } from "../mcp/security-adapter.mjs";
+
 const ALLOWED_ALGORITHMS = new Set(["RS256"]);
 
 export class OAuthConfigurationError extends Error {}
@@ -19,14 +20,20 @@ export function oauthConfiguration(env) {
       "DESK_V2_OAUTH_AUDIENCE must equal DESK_V2_MCP_CANONICAL_URL."
     );
   }
-  return { issuer, resource, audience, jwksUri, requiredScope: REQUIRED_SCOPE };
+  let requiredScopes;
+  try {
+    requiredScopes = profileConfiguration(env.DESK_V2_MCP_PROFILE).scopes;
+  } catch {
+    throw new OAuthConfigurationError("DESK_V2_MCP_PROFILE is invalid.");
+  }
+  return { issuer, resource, audience, jwksUri, requiredScopes };
 }
 
 export function protectedResourceMetadata(config) {
   return {
     resource: config.resource,
     authorization_servers: [config.issuer],
-    scopes_supported: [config.requiredScope],
+    scopes_supported: [...config.requiredScopes],
     bearer_methods_supported: ["header"]
   };
 }
@@ -39,7 +46,7 @@ export function resourceMetadataUrl(config) {
 export function bearerChallenge(config, error = undefined) {
   const fields = [
     `resource_metadata="${resourceMetadataUrl(config)}"`,
-    `scope="${config.requiredScope}"`
+    `scope="${config.requiredScopes.join(" ")}"`
   ];
   if (error) fields.push(`error="${error}"`);
   return `Bearer ${fields.join(", ")}`;
@@ -116,7 +123,7 @@ export async function verifyJwt(token, config, options = {}) {
     throw new OAuthTokenError("Token not active.");
   }
   const scopes = typeof claims.scope === "string" ? claims.scope.split(/\s+/).filter(Boolean) : [];
-  if (!scopes.includes(config.requiredScope)) {
+  if (!config.requiredScopes.every(scope => scopes.includes(scope))) {
     throw new OAuthTokenError("Required scope missing.");
   }
   return claims;
