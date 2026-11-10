@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import worker from "../src/index.mjs";
+import { createWorker } from "../src/index.mjs";
 
 const metadata = {
   environment: "v2-development",
@@ -139,6 +140,27 @@ for (const [name, runtime] of invalidReadinessCases) {
 
 test("route sconosciuta restituisce 404", async () => {
   assert.equal((await worker.fetch(request("/missing"), env())).status, 404);
+});
+
+test("un profilo OAuth sconosciuto fallisce chiuso", async () => {
+  const oauthWorker = createWorker({ fetchImpl: async () => {
+    throw new Error("JWKS must not be requested for an invalid profile");
+  } });
+  const runtime = {
+    DESK_V2_MCP_AUTH_MODE: "oauth",
+    DESK_V2_MCP_PROFILE: "unknown-profile",
+    DESK_V2_OAUTH_ISSUER: "https://desk-test.example/",
+    DESK_V2_OAUTH_AUDIENCE: "https://desk-v2.example/mcp",
+    DESK_V2_OAUTH_JWKS_URI: "https://desk-test.example/.well-known/jwks.json",
+    DESK_V2_MCP_CANONICAL_URL: "https://desk-v2.example/mcp"
+  };
+  const response = await oauthWorker.fetch(new Request("https://desk-v2.example/mcp", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })
+  }), runtime, {});
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { error: "MCP_OAUTH_NOT_CONFIGURED" });
 });
 
 for (const path of ["/health", "/ready", "/missing"]) {
