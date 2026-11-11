@@ -106,6 +106,158 @@ test("JWT and JWKS parsing failures remain authentication errors", async () => {
   );
 });
 
+test("OAuth failures expose safe diagnostic codes for every validation stage", async () => {
+  const fixture = await jwtFixture();
+  const config = oauthConfiguration(oauthEnv(CHATGPT_BUSINESS_WRITE_PROFILE));
+  const other = await jwtFixture();
+  const cases = [
+    ["BEARER_MISSING", () => authorizeOAuthRequest(mcpRequest("initialize"), config)],
+    ["BEARER_MALFORMED", () => authorizeOAuthRequest(
+      mcpRequestWithAuthorization("Basic credentials"), config
+    )],
+    ["JWT_MALFORMED", () => verifyJwt("not-a-jwt", config)],
+    ["JWT_HEADER_UNSUPPORTED", async () => verifyJwt(
+      await fixture.token({ scope: "desk.read desk.write" }, fixture.privateKey, { alg: "HS256" }),
+      config
+    )],
+    ["JWKS_UNAVAILABLE", async () => verifyJwt(
+      await fixture.token({ scope: "desk.read desk.write" }), config,
+      { fetchImpl: async () => { throw new Error("offline"); } }
+    )],
+    ["SIGNING_KEY_NOT_FOUND", async () => verifyJwt(
+      await fixture.token({ scope: "desk.read desk.write" }), config,
+      { fetchImpl: async () => Response.json({ keys: [] }) }
+    )],
+    ["SIGNATURE_INVALID", async () => verifyJwt(
+      await fixture.token({ scope: "desk.read desk.write" }, other.privateKey), config,
+      { fetchImpl: fixture.fetchImpl, now: fixture.now }
+    )],
+    ["ISSUER_INVALID", async () => verifyJwt(
+      await fixture.token({ iss: "https://wrong.example/", scope: "desk.read desk.write" }),
+      config, { fetchImpl: fixture.fetchImpl, now: fixture.now }
+    )],
+    ["AUDIENCE_INVALID", async () => verifyJwt(
+      await fixture.token({ aud: "https://wrong.example/mcp", scope: "desk.read desk.write" }),
+      config, { fetchImpl: fixture.fetchImpl, now: fixture.now }
+    )],
+    ["TOKEN_EXPIRED", async () => verifyJwt(
+      await fixture.token({ exp: 1, scope: "desk.read desk.write" }), config,
+      { fetchImpl: fixture.fetchImpl, now: fixture.now }
+    )],
+    ["TOKEN_NOT_ACTIVE", async () => verifyJwt(
+      await fixture.token({ nbf: fixture.now + 60, scope: "desk.read desk.write" }), config,
+      { fetchImpl: fixture.fetchImpl, now: fixture.now }
+    )],
+    ["REQUIRED_SCOPE_MISSING", async () => verifyJwt(
+      await fixture.token({ scope: "desk.read" }), config,
+      { fetchImpl: fixture.fetchImpl, now: fixture.now }
+    )]
+  ];
+  for (const [code, operation] of cases) {
+    await assert.rejects(operation, error => (
+      error instanceof OAuthTokenError && error.code === code
+    ), code);
+  }
+});
+
+test("OAuth diagnostics are opt-in, safe, and do not change the public 401", async () => {
+  const secretMarker = "secret-token-must-not-appear";
+  const entries = [];
+  const logger = { warn: (...args) => entries.push(args) };
+  const runtime = {
+    ...oauthEnv(CHATGPT_BUSINESS_WRITE_PROFILE),
+    DESK_V2_OAUTH_DIAGNOSTICS: "true"
+  };
+  const worker = createWorker({ logger });
+  const request = mcpRequestWithAuthorization(`Bearer ${secretMarker}`, {
+    "x-request-id": "oauth-test-401"
+  });
+  const response = await worker.fetch(request, runtime, {});
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), { error: "UNAUTHORIZED" });
+  assert.match(response.headers.get("www-authenticate"), /error="invalid_token"/);
+  assert.deepEqual(entries, [["DESK_V2_OAUTH_FAILURE", {
+    code: "JWT_MALFORMED",
+    profile: CHATGPT_BUSINESS_WRITE_PROFILE,
+    endpoint: "/mcp",
+    requestId: "oauth-test-401"
+  }]]);
+  const serialized = JSON.stringify(entries);
+  assert.equal(serialized.includes(secretMarker), false);
+  assert.equal(serialized.includes("authorization"), false);
+  assert.equal(serialized.includes("claims"), false);
+
+  const disabledEntries = [];
+  const disabledWorker = createWorker({
+    logger: { warn: (...args) => disabledEntries.push(args) }
+  });
+  await disabledWorker.fetch(mcpRequestWithAuthorization(`Bearer ${secretMarker}`),
+    oauthEnv(CHATGPT_BUSINESS_WRITE_PROFILE), {});
+  assert.deepEqual(disabledEntries, []);
+});
+
+test("OAuth diagnostics remain best-effort when the logger fails", async () => {
+  const worker = createWorker({
+    logger: { warn: () => { throw new Error("logger unavailable"); } }
+  });
+  const runtime = {
+    ...oauthEnv(CHATGPT_BUSINESS_WRITE_PROFILE),
+    DESK_V2_OAUTH_DIAGNOSTICS: "true"
+  };
+  const response = await worker.fetch(
+    mcpRequestWithAuthorization("Bearer malformed-token"), runtime, {}
+  );
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), { error: "UNAUTHORIZED" });
+  assert.equal(response.headers.get("www-authenticate"),
+    'Bearer resource_metadata="https://desk-v2.example.test/.well-known/oauth-protected-resource", scope="desk.read desk.write", error="invalid_token"');
+});
+
+test("OAuth diagnostics discard unsafe and oversized correlation IDs", async () => {
+  for (const requestId of ["unsafe correlation id", "x".repeat(129)]) {
+    const entries = [];
+    const worker = createWorker({
+      logger: { warn: (...args) => entries.push(args) }
+    });
+    const runtime = {
+      ...oauthEnv(CHATGPT_BUSINESS_WRITE_PROFILE),
+      DESK_V2_OAUTH_DIAGNOSTICS: "true"
+    };
+    const response = await worker.fetch(
+      mcpRequestWithAuthorization("Bearer malformed-token", { "x-request-id": requestId }),
+      runtime,
+      {}
+    );
+    assert.equal(response.status, 401);
+    assert.deepEqual(entries, [["DESK_V2_OAUTH_FAILURE", {
+      code: "JWT_MALFORMED",
+      profile: CHATGPT_BUSINESS_WRITE_PROFILE,
+      endpoint: "/mcp"
+    }]]);
+  }
+});
+
+test("permissions do not replace scope and readonly differs from business-write", async () => {
+  const fixture = await jwtFixture();
+  const token = await fixture.token({
+    scope: "desk.read",
+    permissions: ["desk.read", "desk.write"]
+  });
+  await authorizeOAuthRequest(mcpRequest("initialize", token),
+    oauthConfiguration(oauthEnv()), {
+      fetchImpl: fixture.fetchImpl,
+      now: fixture.now
+    });
+  await assert.rejects(
+    authorizeOAuthRequest(mcpRequest("initialize", token),
+      oauthConfiguration(oauthEnv(CHATGPT_BUSINESS_WRITE_PROFILE)), {
+        fetchImpl: fixture.fetchImpl,
+        now: fixture.now
+      }),
+    error => error instanceof OAuthTokenError && error.code === "REQUIRED_SCOPE_MISSING"
+  );
+});
+
 test("OAuth HTTP challenge and protected-resource metadata are exposed", async () => {
   const fixture = await jwtFixture();
   const worker = createWorker({ fetchImpl: fixture.fetchImpl });
@@ -299,6 +451,19 @@ function mcpRequest(method, token) {
   });
 }
 
+function mcpRequestWithAuthorization(authorization, extraHeaders = {}) {
+  return new Request(resource, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json",
+      authorization,
+      ...extraHeaders
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })
+  });
+}
+
 async function jwtFixture() {
   const pair = await crypto.subtle.generateKey({
     name: "RSASSA-PKCS1-v1_5", modulusLength: 2048,
@@ -314,8 +479,10 @@ async function jwtFixture() {
       assert.equal(String(url), jwksUri);
       return Response.json({ keys: [publicJwk] });
     },
-    async token(overrides = {}, signingKey = pair.privateKey) {
-      const header = encode({ alg: "RS256", typ: "JWT", kid: "desk-local-key" });
+    async token(overrides = {}, signingKey = pair.privateKey, headerOverrides = {}) {
+      const header = encode({
+        alg: "RS256", typ: "JWT", kid: "desk-local-key", ...headerOverrides
+      });
       const claims = encode({
         iss: issuer, aud: resource, sub: "auth0|desk-local-test",
         scope: "openid desk.read", nbf: now - 30, exp: now + 300, ...overrides

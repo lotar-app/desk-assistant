@@ -3,7 +3,13 @@ import { profileConfiguration } from "../mcp/security-adapter.mjs";
 const ALLOWED_ALGORITHMS = new Set(["RS256"]);
 
 export class OAuthConfigurationError extends Error {}
-export class OAuthTokenError extends Error {}
+export class OAuthTokenError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = "OAuthTokenError";
+    this.code = code;
+  }
+}
 
 export function oauthConfiguration(env) {
   const issuer = requiredUrl(env.DESK_V2_OAUTH_ISSUER, "DESK_V2_OAUTH_ISSUER", {
@@ -54,23 +60,26 @@ export function bearerChallenge(config, error = undefined) {
 
 export async function authorizeOAuthRequest(request, config, options = {}) {
   const authorization = request.headers.get("authorization") || "";
+  if (!authorization) {
+    throw tokenError("BEARER_MISSING", "Missing bearer token.");
+  }
   const match = /^Bearer ([^\s]+)$/.exec(authorization);
-  if (!match) throw new OAuthTokenError("Missing or malformed bearer token.");
+  if (!match) throw tokenError("BEARER_MALFORMED", "Malformed bearer token.");
   return verifyJwt(match[1], config, options);
 }
 
 export async function verifyJwt(token, config, options = {}) {
   const parts = token.split(".");
   if (parts.length !== 3 || parts.some(part => !part)) {
-    throw new OAuthTokenError("Malformed JWT.");
+    throw tokenError("JWT_MALFORMED", "Malformed JWT.");
   }
   const header = decodeJson(parts[0], "JWT header");
   const claims = decodeJson(parts[1], "JWT claims");
   if (!isRecord(header) || !isRecord(claims)) {
-    throw new OAuthTokenError("Invalid JWT payload.");
+    throw tokenError("JWT_MALFORMED", "Invalid JWT payload.");
   }
   if (!ALLOWED_ALGORITHMS.has(header.alg) || typeof header.kid !== "string" || !header.kid) {
-    throw new OAuthTokenError("Unsupported JWT header.");
+    throw tokenError("JWT_HEADER_UNSUPPORTED", "Unsupported JWT header.");
   }
 
   const fetchImpl = options.fetchImpl || fetch;
@@ -78,16 +87,16 @@ export async function verifyJwt(token, config, options = {}) {
   try {
     response = await fetchImpl(config.jwksUri, { headers: { accept: "application/json" } });
   } catch {
-    throw new OAuthTokenError("JWKS could not be loaded.");
+    throw tokenError("JWKS_UNAVAILABLE", "JWKS could not be loaded.");
   }
-  if (!response.ok) throw new OAuthTokenError("JWKS could not be loaded.");
+  if (!response.ok) throw tokenError("JWKS_UNAVAILABLE", "JWKS could not be loaded.");
   let jwks;
   try { jwks = await response.json(); }
-  catch { throw new OAuthTokenError("JWKS could not be parsed."); }
+  catch { throw tokenError("JWKS_UNAVAILABLE", "JWKS could not be parsed."); }
   const candidates = Array.isArray(jwks?.keys) ? jwks.keys : [];
   const jwk = candidates.find(key => key?.kid === header.kid && key?.kty === "RSA" &&
     (!key.alg || key.alg === header.alg) && (!key.use || key.use === "sig"));
-  if (!jwk) throw new OAuthTokenError("Signing key not found.");
+  if (!jwk) throw tokenError("SIGNING_KEY_NOT_FOUND", "Signing key not found.");
 
   let key;
   try {
@@ -95,7 +104,7 @@ export async function verifyJwt(token, config, options = {}) {
       "jwk", jwk, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]
     );
   } catch {
-    throw new OAuthTokenError("Invalid signing key.");
+    throw tokenError("SIGNING_KEY_NOT_FOUND", "Invalid signing key.");
   }
   let validSignature;
   try {
@@ -106,25 +115,27 @@ export async function verifyJwt(token, config, options = {}) {
       new TextEncoder().encode(`${parts[0]}.${parts[1]}`)
     );
   } catch {
-    throw new OAuthTokenError("Invalid JWT signature.");
+    throw tokenError("SIGNATURE_INVALID", "Invalid JWT signature.");
   }
-  if (!validSignature) throw new OAuthTokenError("Invalid JWT signature.");
+  if (!validSignature) throw tokenError("SIGNATURE_INVALID", "Invalid JWT signature.");
 
   const now = options.now ?? Math.floor(Date.now() / 1000);
-  if (claims.iss !== config.issuer) throw new OAuthTokenError("Invalid token issuer.");
+  if (claims.iss !== config.issuer) {
+    throw tokenError("ISSUER_INVALID", "Invalid token issuer.");
+  }
   const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
   if (!audiences.includes(config.audience)) {
-    throw new OAuthTokenError("Invalid token audience.");
+    throw tokenError("AUDIENCE_INVALID", "Invalid token audience.");
   }
   if (!Number.isFinite(claims.exp) || claims.exp <= now) {
-    throw new OAuthTokenError("Token expired.");
+    throw tokenError("TOKEN_EXPIRED", "Token expired.");
   }
   if (claims.nbf !== undefined && (!Number.isFinite(claims.nbf) || claims.nbf > now)) {
-    throw new OAuthTokenError("Token not active.");
+    throw tokenError("TOKEN_NOT_ACTIVE", "Token not active.");
   }
   const scopes = typeof claims.scope === "string" ? claims.scope.split(/\s+/).filter(Boolean) : [];
   if (!config.requiredScopes.every(scope => scopes.includes(scope))) {
-    throw new OAuthTokenError("Required scope missing.");
+    throw tokenError("REQUIRED_SCOPE_MISSING", "Required scope missing.");
   }
   return claims;
 }
@@ -149,12 +160,12 @@ function requiredUrl(value, name, options = {}) {
 
 function decodeJson(value, label) {
   try { return JSON.parse(new TextDecoder().decode(decodeBase64Url(value))); }
-  catch { throw new OAuthTokenError(`Invalid ${label}.`); }
+  catch { throw tokenError("JWT_MALFORMED", `Invalid ${label}.`); }
 }
 
 function decodeBase64Url(value) {
   if (typeof value !== "string" || !/^[A-Za-z0-9_-]+$/.test(value)) {
-    throw new OAuthTokenError("Invalid base64url value.");
+    throw tokenError("JWT_MALFORMED", "Invalid base64url value.");
   }
   const padded = value.replace(/-/g, "+").replace(/_/g, "/")
     .padEnd(Math.ceil(value.length / 4) * 4, "=");
@@ -164,4 +175,8 @@ function decodeBase64Url(value) {
 
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function tokenError(code, message) {
+  return new OAuthTokenError(code, message);
 }

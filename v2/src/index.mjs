@@ -82,6 +82,7 @@ async function handleOAuthMcp(request, env, ctx, options) {
     await authorizeOAuthRequest(request, config, { fetchImpl: options.fetchImpl });
   } catch (error) {
     if (!(error instanceof OAuthTokenError)) throw error;
+    logOAuthFailure(error, request, env, options);
     return oauthUnauthorized(config, "invalid_token");
   }
   const profile = env.DESK_V2_MCP_PROFILE || CHATGPT_READONLY_PROFILE;
@@ -119,6 +120,30 @@ function oauthUnauthorized(config, error) {
       "www-authenticate": bearerChallenge(config, error)
     }
   });
+}
+
+function logOAuthFailure(error, request, env, options) {
+  if (env?.DESK_V2_OAUTH_DIAGNOSTICS !== "true") return;
+  try {
+    const logger = options.logger || console;
+    if (typeof logger?.warn !== "function") return;
+    const requestId = safeRequestId(
+      request.headers.get("cf-ray") || request.headers.get("x-request-id")
+    );
+    logger.warn("DESK_V2_OAUTH_FAILURE", {
+      code: error.code,
+      profile: env.DESK_V2_MCP_PROFILE || CHATGPT_READONLY_PROFILE,
+      endpoint: new URL(request.url).pathname,
+      ...(requestId ? { requestId } : {})
+    });
+  } catch {
+    // OAuth diagnostics are best-effort and must never replace the public 401.
+  }
+}
+
+function safeRequestId(value) {
+  if (typeof value !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/.test(value)) return undefined;
+  return value;
 }
 
 async function authorized(request, expectedToken) {
